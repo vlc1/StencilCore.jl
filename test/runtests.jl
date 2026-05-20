@@ -1,5 +1,6 @@
 using StencilCore
 using Test
+using StaticArrays: SUnitRange, SVector
 
 # Structs must be defined at top level (not inside @testset scopes).
 struct _DummyStencil{S} <: AbstractStencil{S} end
@@ -68,6 +69,49 @@ struct _DummyTerm{T} <: AbstractTerm{T} end
         @test repr(SShift())    == "𝟎"
         # Multi-digit dimension subscripts (D > 9).
         @test repr(SShift(SPair{10, 1}())) == "ê₁₀"
+    end
+
+    @testset "LinearStencil construction" begin
+        # Concrete-array coefficient (array-of-structs).
+        arr = fill(SVector(-1.0, 1.0), 5)
+        st = LinearStencil{1}(SUnitRange(0, 1), arr)
+        @test st isa LinearStencil{1, 0, 2, SVector{2, Float64}, typeof(arr), ColumnAccess}
+        @test st isa AbstractStencil{ColumnAccess}
+        @test AccessStyle(st) === ColumnAccess()
+        @test st.term === arr
+
+        # Explicit RowAccess.
+        st_row = LinearStencil{1}(RowAccess, SUnitRange(0, 1), arr)
+        @test AccessStyle(st_row) === RowAccess()
+
+        # Symbolic-term coefficient (no grid rank, no D ≤ N check).
+        sym = _DummyTerm{SVector{2, Float64}}()
+        sst = LinearStencil{2}(SUnitRange(0, 1), sym)
+        @test sst isa LinearStencil{2, 0, 2, SVector{2, Float64}, typeof(sym), ColumnAccess}
+        @test sst.term === sym
+
+        # D ≤ N enforced for concrete arrays (2-D stencil dim on a 1-D coef array).
+        @test_throws ArgumentError LinearStencil{2}(SUnitRange(0, 1), arr)
+        # SVector length must match L.
+        @test_throws ArgumentError LinearStencil{1}(SUnitRange(0, 2), arr)  # L=3 vs SVector{2}
+        # Non-SUnitRange offsets.
+        @test_throws ArgumentError LinearStencil{1}(0:1, arr)
+    end
+
+    @testset "StarStencil construction" begin
+        arrs = (fill(SVector(-1.0, 2.0, -1.0), 5, 4), fill(SVector(-1.0, 2.0, -1.0), 5, 4))
+        st = StarStencil{1}(arrs)
+        @test st isa StarStencil{1, 2, 3, SVector{3, Float64}, typeof(arrs), ColumnAccess}
+        @test AccessStyle(st) === ColumnAccess()
+
+        # Symbolic per-axis coefficients.
+        syms = (_DummyTerm{SVector{3, Float64}}(), _DummyTerm{SVector{3, Float64}}())
+        sst = StarStencil{1}(syms)
+        @test sst isa StarStencil{1, 2, 3, SVector{3, Float64}, typeof(syms), ColumnAccess}
+
+        # M = 2L+1 mismatch (SVector{2} with L=1 expects SVector{3}).
+        bad = (fill(SVector(-1.0, 1.0), 5, 4), fill(SVector(-1.0, 1.0), 5, 4))
+        @test_throws ArgumentError StarStencil{1}(bad)
     end
 
 end
