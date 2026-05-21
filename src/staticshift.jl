@@ -121,7 +121,8 @@ function Base.show(io::IO, s::StaticShift)
     end
 end
 
-# Basis shifts ê₁ … ê₉ (unit offset along each of the first 9 dims).
+# Zero shift (identity) and basis shifts ê₁ … ê₉ (unit offset per dim).
+const ô  = StaticShift()
 const ê₁ = StaticShift((StaticPair{1, 1}(),))
 const ê₂ = StaticShift((StaticPair{2, 1}(),))
 const ê₃ = StaticShift((StaticPair{3, 1}(),))

@@ -122,4 +122,41 @@ struct _DummyTerm{T} <: AbstractTerm{T} end
         @test_throws ArgumentError StarStencil{1}(fill(SVector(1.0, 2.0, 3.0, 4.0), 5, 4))
     end
 
+    @testset "Stencil construction + narrowing" begin
+        @test ô isa StaticShift{Tuple{}}
+
+        # Linear pattern: single axis, contiguous offsets -2:0.
+        shifts = (-2ê₁, -ê₁, ô)
+        term = fill(SVector(1.0, -4.0, 3.0), 5)
+        st = Stencil(RowAccess,shifts, term)
+        @test st isa Stencil{3, typeof(shifts), SVector{3, Float64}, typeof(term), RowAccess}
+        @test AccessStyle(st) === RowAccess()
+        ln = as_linear(st)
+        @test ln isa LinearStencil{1, -2, 3, SVector{3, Float64}, typeof(term), RowAccess}
+        @test ln.term === term                       # verbatim copy
+        @test ln.offsets == SUnitRange(-2, 0)
+
+        # Symbolic coefficient narrows just as well.
+        sym = _DummyTerm{SVector{3, Float64}}()
+        @test as_linear(Stencil(ColumnAccess,shifts, sym)) isa
+              LinearStencil{1, -2, 3, SVector{3, Float64}, typeof(sym), ColumnAccess}
+
+        # Star pattern: 2-D L=1, reverse-lex (-ê₂, -ê₁, ô, ê₁, ê₂), M=5.
+        sshifts = (-ê₂, -ê₁, ô, ê₁, ê₂)
+        sterm = fill(SVector(-1.0, -1.0, 4.0, -1.0, -1.0), 5, 4)
+        sst = Stencil(ColumnAccess,sshifts, sterm)
+        ss = as_star(sst)
+        @test ss isa StarStencil{1, 2, 5, SVector{5, Float64}, typeof(sterm), ColumnAccess}
+        @test ss.term === sterm                       # verbatim copy
+
+        # Rejections.
+        @test_throws ArgumentError as_linear(sst)                       # multi-axis ⇒ not linear
+        @test_throws ArgumentError as_star(st)                          # 3 offsets ≠ 2NL+1
+        # Non-contiguous single-axis ⇒ not linear.
+        gap = Stencil(RowAccess,(-2ê₁, ô, 2ê₁), fill(SVector(1.0, 2.0, 3.0), 5))
+        @test_throws ArgumentError as_linear(gap)
+        # Shift count ≠ SVector length ⇒ friendly ctor error.
+        @test_throws ArgumentError Stencil(RowAccess,(-ê₁, ô), fill(SVector(1.0, 2.0, 3.0), 5))
+    end
+
 end
