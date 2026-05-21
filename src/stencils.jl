@@ -91,81 +91,84 @@ function LinearStencil{D}(::Type{S}, offsets, term) where {D, S<:AccessStyle}
         "SVector{L} of coefficients in ascending-offset order (element[1] is for δ_min)."))
 end
 
+# Validate a star's (L, M) and return the derived grid rank N = (M-1)/(2L).
+function _star_dims(L, M::Int)
+    (L isa Int && L >= 1) || throw(ArgumentError(
+        "stencil reach L must be a positive Int (got $L)"))
+    (M - 1) % (2L) == 0 || throw(ArgumentError(
+        "coefficient SVector length M=$M must equal 2NL+1 for an integer " *
+        "grid rank N (L=$L); (M-1) must be divisible by 2L=$(2L)"))
+    N = (M - 1) ÷ (2L)
+    N >= 1 || throw(ArgumentError(
+        "derived grid rank N=(M-1)/(2L)=$N must be ≥ 1 (M=$M, L=$L)"))
+    return N
+end
+
 """
-    StarStencil{L, N, M, E<:SVector{M}, C<:NTuple{N, ArrayOrTermLike{E}}, S<:AccessStyle}
+    StarStencil{L, N, M, E<:SVector{M}, A<:ArrayOrTermLike{E}, S<:AccessStyle}
         <: AbstractStencil{S}
 
 N-D variable-coefficient star-shaped stencil with symmetric reach `−L … +L`
-along every mesh dimension. Per-axis offsets are diagonal indices; offset `δ`
-along axis `d` lands at row coord `c_d − δ`, identity elsewhere. The diagonal
-sums per-axis δ=0 contributions: `A[r, r] = Σ_d terms[d][c][L + 1]`.
+along every mesh dimension, stored **interlaced**: a single coefficient
+`term::A` whose element at each cell is the `SVector{M}` of the whole star,
+`M = 2NL + 1`. The entries are in **reverse-lexicographic offset order**
+(axis `N` most significant — the `CartesianIndex` order) with the diagonal
+as the explicit middle slot `(M+1)/2`. Unlike a per-axis decomposition, the
+diagonal is a single free coefficient (Helmholtz `k²`, parabolic `∂ₜ`),
+**not** a sum of per-axis centers.
 
-`terms[d][c_idx...][k]` is the coefficient at column `c_idx` for axis `d`,
-offset `δ = k − L − 1` (under `S = ColumnAccess`).
+For `L = 2`, `N = 3` (`M = 13`) the slot ↦ offset map is:
+
+    1:(d3,-2) 2:(d3,-1) 3:(d2,-2) 4:(d2,-1) 5:(d1,-2) 6:(d1,-1) 7:(diag)
+    8:(d1,+1) 9:(d1,+2) 10:(d2,+1) 11:(d2,+2) 12:(d3,+1) 13:(d3,+2)
 
 Type parameters:
-- `L ≥ 1` per-axis reach; `M = 2L + 1` offsets per axis.
-- `N` axis count = tuple length = grid rank (kept: fixed by construction
-  even for a symbolic coefficient).
-- `E<:SVector{M}`: per-axis coefficient element type; scalar `eltype(E)`.
-- `C<:NTuple{N, ArrayOrTermLike{E}}`: one coefficient container per axis
-  (array or term; per-axis concrete types may differ).
+- `L ≥ 1` per-axis reach; `M = 2NL + 1` whole-star offset count.
+- `N` grid rank, kept explicit; checked to equal `(M-1)/(2L)` (and the
+  coefficient array's `ndims`, when concrete).
+- `E<:SVector{M}` coefficient element type; scalar `eltype(E)`.
+- `A<:ArrayOrTermLike{E}`: the (single) coefficient container — concrete
+  array (assemblable) or symbolic term.
 - `S<:AccessStyle`.
 """
-struct StarStencil{L, N, M, E<:SVector{M}, C<:NTuple{N, ArrayOrTermLike{E}}, S<:AccessStyle} <: AbstractStencil{S}
-    terms::C
+struct StarStencil{L, N, M, E<:SVector{M}, A<:ArrayOrTermLike{E}, S<:AccessStyle} <: AbstractStencil{S}
+    term::A
 
-    # All-array coefficients.
+    # Concrete-array coefficient: grid rank N = ndims; cross-check M = 2NL+1.
     function StarStencil{L}(
         ::Type{S},
-        terms::NTuple{N, AbstractArray{SVector{M, T}, N}},
-    ) where {L, S<:AccessStyle, N, M, T}
-        L isa Int && L >= 1 || throw(ArgumentError(
-            "stencil reach L must be a positive Int (got $L)"))
-        M == 2L + 1 || throw(ArgumentError(
-            "per-axis SVector length must be 2L+1=$(2L + 1) (got $M)"))
-        new{L, N, M, SVector{M, T}, typeof(terms), S}(terms)
+        term::AbstractArray{SVector{M, T}, N},
+    ) where {L, S<:AccessStyle, M, T, N}
+        Nd = _star_dims(L, M)
+        Nd == N || throw(ArgumentError(
+            "coefficient array ndims=$N must equal grid rank (M-1)/(2L)=$Nd " *
+            "(M=$M, L=$L)"))
+        new{L, N, M, SVector{M, T}, typeof(term), S}(term)
     end
 
-    # All-term (symbolic) coefficients.
+    # Symbolic-term coefficient: grid rank derived from (L, M).
     function StarStencil{L}(
         ::Type{S},
-        terms::NTuple{N, AbstractTerm{SVector{M, T}}},
-    ) where {L, S<:AccessStyle, N, M, T}
-        L isa Int && L >= 1 || throw(ArgumentError(
-            "stencil reach L must be a positive Int (got $L)"))
-        M == 2L + 1 || throw(ArgumentError(
-            "per-axis SVector length must be 2L+1=$(2L + 1) (got $M)"))
-        new{L, N, M, SVector{M, T}, typeof(terms), S}(terms)
+        term::AbstractTerm{SVector{M, T}},
+    ) where {L, S<:AccessStyle, M, T}
+        N = _star_dims(L, M)
+        new{L, N, M, SVector{M, T}, typeof(term), S}(term)
     end
 end
 
 # Default outer constructor: bare 1-arg form forwards with ColumnAccess.
-StarStencil{L}(terms) where {L} = StarStencil{L}(ColumnAccess, terms)
+StarStencil{L}(term) where {L} = StarStencil{L}(ColumnAccess, term)
 
-# Friendly outer constructor: reports specific errors for ill-typed tuples.
-function StarStencil{L}(::Type{S}, terms::Tuple) where {L, S<:AccessStyle}
-    L isa Int && L >= 1 || throw(ArgumentError(
-        "stencil reach L must be a positive Int (got $L)"))
-    M_expected = 2L + 1
-    all(c -> c isa ArrayOrTermLike, terms) || throw(ArgumentError(
-        "each per-axis term must be an AbstractArray or AbstractTerm of " *
-        "SVector{$M_expected} (got $(map(typeof, terms)))"))
-    Es = map(eltype, terms)
-    all(E -> E <: SVector, Es) || throw(ArgumentError(
-        "each per-axis term eltype must be SVector{$M_expected, T} (got eltypes $Es)"))
-    all(E -> length(E) == M_expected, Es) || throw(ArgumentError(
-        "each per-axis term eltype must be SVector{$M_expected, T} to match " *
-        "2L+1=$M_expected (got SVector lengths $(map(length, Es)))"))
-    Ts = map(eltype, Es)
-    all(==(first(Ts)), Ts) || throw(ArgumentError(
-        "all terms must share the same scalar eltype (got $Ts)"))
-    throw(ArgumentError("StarStencil could not be constructed; terms = $terms"))
-end
-
-# Catch-all for non-Tuple terms.
-function StarStencil{L}(::Type{S}, terms) where {L, S<:AccessStyle}
-    throw(ArgumentError(
-        "terms must be an NTuple{N, ArrayOrTermLike{SVector{M, T}}} " *
-        "(got $(typeof(terms)))"))
+# Friendly outer constructor: reports specific errors when neither inner
+# method matched (coefficient not an Array/Term of SVector).
+function StarStencil{L}(::Type{S}, term) where {L, S<:AccessStyle}
+    term isa ArrayOrTermLike || throw(ArgumentError(
+        "term must be an AbstractArray or AbstractTerm with eltype SVector{M, T} " *
+        "(got $(typeof(term)))"))
+    E = eltype(term)
+    E <: SVector || throw(ArgumentError(
+        "term eltype must be SVector{M, T} (got eltype $E); each element is the " *
+        "whole star's coefficients in reverse-lex order with the diagonal mid-slot"))
+    _star_dims(L, length(E))  # throws on a bad (L, M); otherwise:
+    throw(ArgumentError("StarStencil could not be constructed; term = $term"))
 end

@@ -98,20 +98,28 @@ struct _DummyTerm{T} <: AbstractTerm{T} end
         @test_throws ArgumentError LinearStencil{1}(0:1, arr)
     end
 
-    @testset "StarStencil construction" begin
-        arrs = (fill(SVector(-1.0, 2.0, -1.0), 5, 4), fill(SVector(-1.0, 2.0, -1.0), 5, 4))
-        st = StarStencil{1}(arrs)
-        @test st isa StarStencil{1, 2, 3, SVector{3, Float64}, typeof(arrs), ColumnAccess}
+    @testset "StarStencil construction (interlaced)" begin
+        # 2-D L=1: M = 2NL+1 = 5; single SVector{5} per cell, diagonal mid-slot.
+        arr = fill(SVector(-1.0, -1.0, 4.0, -1.0, -1.0), 5, 4)
+        st = StarStencil{1}(arr)
+        @test st isa StarStencil{1, 2, 5, SVector{5, Float64}, typeof(arr), ColumnAccess}
         @test AccessStyle(st) === ColumnAccess()
+        @test st.term === arr
 
-        # Symbolic per-axis coefficients.
-        syms = (_DummyTerm{SVector{3, Float64}}(), _DummyTerm{SVector{3, Float64}}())
-        sst = StarStencil{1}(syms)
-        @test sst isa StarStencil{1, 2, 3, SVector{3, Float64}, typeof(syms), ColumnAccess}
+        # 3-D L=2: M = 2*3*2+1 = 13.
+        arr3 = fill(SVector(ntuple(_ -> 1.0, 13)...), 4, 5, 6)
+        st3 = StarStencil{2}(arr3)
+        @test st3 isa StarStencil{2, 3, 13, SVector{13, Float64}, typeof(arr3), ColumnAccess}
 
-        # M = 2L+1 mismatch (SVector{2} with L=1 expects SVector{3}).
-        bad = (fill(SVector(-1.0, 1.0), 5, 4), fill(SVector(-1.0, 1.0), 5, 4))
-        @test_throws ArgumentError StarStencil{1}(bad)
+        # Symbolic coefficient: grid rank derived from (L, M).
+        sym = _DummyTerm{SVector{5, Float64}}()
+        sst = StarStencil{1}(sym)
+        @test sst isa StarStencil{1, 2, 5, SVector{5, Float64}, typeof(sym), ColumnAccess}
+
+        # ndims must equal (M-1)/(2L): SVector{5} (N=2) on a 3-D array.
+        @test_throws ArgumentError StarStencil{1}(fill(SVector(-1.0, -1.0, 4.0, -1.0, -1.0), 3, 4, 5))
+        # M not of the form 2NL+1: SVector{4}, L=1 ⇒ (4-1)%2 ≠ 0.
+        @test_throws ArgumentError StarStencil{1}(fill(SVector(1.0, 2.0, 3.0, 4.0), 5, 4))
     end
 
 end
