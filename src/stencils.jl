@@ -2,7 +2,7 @@
 # coefficient may be a concrete array (assemblable) or a symbolic term
 # (`materialize` first). Both are `ArrayOrTermLike{E}` with element type
 # `E<:SVector{L}` (array-of-structs: one SVector of all per-offset
-# coefficients per column). The CSC assembler (CartesianOperators) adds
+# coefficients per column). The CSC assembler (StencilAssembly) adds
 # methods constrained to concrete-array coefficients.
 
 """

@@ -1,11 +1,11 @@
 # AGENTS.md
 
 Canonical record of the **stencil + term-like type vocabulary** shared by
-`CartesianOperators` (CSC assembly) and `GridAlgebra` (symbolic CAS).
+`StencilAssembly` (CSC assembly) and `StencilCalculus` (symbolic CAS).
 StencilCore owns the *types*; it has no assembly and depends only on
 `StaticArrays`. CSC assembly invariants live in
-[`CartesianOperators/AGENTS.md`](../CartesianOperators/AGENTS.md); the CAS
-design lives in [`docs/cas.md`](../CartesianOperators/docs/cas.md).
+[`StencilAssembly/AGENTS.md`](../StencilAssembly/AGENTS.md); the CAS
+design lives in [`docs/cas.md`](../StencilCalculus/docs/cas.md).
 
 ## Sticky decisions
 
@@ -19,7 +19,7 @@ design lives in [`docs/cas.md`](../CartesianOperators/docs/cas.md).
    materialized element type (concrete or abstract): a term "behaves like
    an array whose `eltype` is `T`", with grid rank `N` unknown until it is
    substituted/materialized. `eltype(::Type{<:AbstractTerm{T}}) = T`.
-   Concrete subtypes live in `GridAlgebra`; StencilCore owns only the
+   Concrete subtypes live in `StencilCalculus`; StencilCore owns only the
    abstract type so coefficients can be named without depending on the CAS.
 
 3. **`ArrayOrTermLike{T} = Union{AbstractArray{T}, AbstractTerm{T}}`** is
@@ -107,7 +107,7 @@ Tests: `julia --project=. -e 'using Pkg; Pkg.test()'`.
 
 Implemented: the type vocabulary above + `as_linear` / `as_star` narrowing.
 **No assembly** — CSC `assemble` / `update!` / `build` live in
-`CartesianOperators` and dispatch on a concrete-array coefficient with
+`StencilAssembly` and dispatch on a concrete-array coefficient with
 `S = ColumnAccess`.
 
 Deferred: `PlanarStencil` + `as_planar`; a direct CSC kernel for the general

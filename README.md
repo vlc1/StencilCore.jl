@@ -6,12 +6,11 @@ them. StencilCore owns the types; it has no assembly and depends only on
 [StaticArrays.jl](https://github.com/JuliaArrays/StaticArrays.jl).
 
 ```
-StencilCore                         types: AccessStyle, AbstractStencil,
-  │                                        AbstractTerm{T}, ArrayOrTermLike,
-  │                                        StaticShift, LinearStencil,
-  │                                        StarStencil, Stencil, as_linear/as_star
-  ├── CartesianOperators            CSC assembly (build / assemble / update!)
-  └── GridAlgebra                   symbolic CAS (simplify, differentiate, materialize)
+StencilCore              types: AccessStyle, AbstractStencil, AbstractTerm{T},
+  │                             ArrayOrTermLike, StaticShift, LinearStencil,
+  │                             StarStencil, Stencil, as_linear / as_star
+  ├── StencilAssembly      CSC assembly  (build / assemble / update!)
+  └── StencilCalculus      symbolic CAS  (simplify, differentiate, materialize)
 ```
 
 ## What it provides
@@ -36,8 +35,8 @@ The three packages are unregistered and resolve each other through relative
 
 ```
 git clone …/StencilCore
-git clone …/CartesianOperators
-git clone …/GridAlgebra
+git clone …/StencilAssembly
+git clone …/StencilCalculus
 ```
 
 Then `]dev /path/to/StencilCore` (or add the others, whose `[sources]` point at

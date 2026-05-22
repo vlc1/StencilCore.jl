@@ -18,7 +18,7 @@ export AbstractTerm, ArrayOrTermLike
 export StaticPair, SPair, StaticShift, SShift, dim, offset
 export ô, ê₁, ê₂, ê₃, ê₄, ê₅, ê₆, ê₇, ê₈, ê₉
 
-# Stencil types (relaxed coefficient; assembly lives in CartesianOperators).
+# Stencil types (relaxed coefficient; assembly lives in StencilAssembly).
 export LinearStencil, StarStencil, Stencil
 
 # Narrowing (Stencil → assemblable LinearStencil / StarStencil).

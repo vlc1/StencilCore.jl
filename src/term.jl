@@ -3,7 +3,7 @@
 # `AbstractTerm{T}` is "a dimension- and size-less array-like object
 # whose `eltype` is `T`" (when `T` is concrete) or "looks like `T`"
 # (when `T` is abstract). Concrete subtypes (`Slot`, `Const`, `Term`,
-# `Shifted`) live in the GridAlgebra package; this package only owns the
+# `Shifted`) live in the StencilCalculus package; this package only owns the
 # supertype so that stencil coefficient types can be expressed as
 # `ArrayOrTermLike{T}` without depending on the CAS.
 
@@ -17,7 +17,7 @@ arrays, but its element type `T` (the value each cell will hold once
 materialized) is fixed at construction.
 
 `eltype(::AbstractTerm{T}) === T`. Concrete subtypes are provided by the
-GridAlgebra package.
+StencilCalculus package.
 """
 abstract type AbstractTerm{T} end
 
