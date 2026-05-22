@@ -1,0 +1,9 @@
+[deps]
+Documenter = "e30172f5-a6a5-5a46-863b-614d45cd2de4"
+StencilCore = "a74cdc4b-3eb6-46ad-ac2b-692b37b57e71"
+
+[sources]
+StencilCore = {path = ".."}
+
+[compat]
+Documenter = "1"

@@ -25,7 +25,20 @@ sparse format is a dispatch-time error (`MethodError`).
 """
 abstract type AccessStyle end
 
+"""
+    ColumnAccess <: AccessStyle
+
+Coefficients anchored at the **column** mesh position — required for
+compressed-sparse-column (`SparseMatrixCSC`) assembly. See [`AccessStyle`](@ref).
+"""
 struct ColumnAccess <: AccessStyle end
+
+"""
+    RowAccess <: AccessStyle
+
+Coefficients anchored at the **row** mesh position — reserved for a future
+compressed-sparse-row backend. See [`AccessStyle`](@ref).
+"""
 struct RowAccess    <: AccessStyle end
 
 """

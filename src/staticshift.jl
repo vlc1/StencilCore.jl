@@ -15,6 +15,12 @@ A single offset of magnitude `O` along mesh dimension `D` (both
 compile-time `Int`s). Singleton. Alias: [`SPair`](@ref).
 """
 struct StaticPair{D, O} end
+
+"""
+    SPair
+
+Alias for [`StaticPair`](@ref).
+"""
 const SPair = StaticPair
 
 """
@@ -76,6 +82,11 @@ struct StaticShift{P<:Tuple{Vararg{StaticPair}}}
     StaticShift(pairs::Tuple{Vararg{StaticPair}}) =
         (np = _normalize(pairs); new{typeof(np)}(np))
 end
+"""
+    SShift
+
+Alias for [`StaticShift`](@ref).
+"""
 const SShift = StaticShift
 
 StaticShift(pairs::StaticPair...) = StaticShift(pairs)

@@ -1,6 +1,7 @@
 # StencilCore.jl
 
 [![Build Status](https://github.com/vlc1/StencilCore.jl/actions/workflows/CI.yml/badge.svg?branch=main)](https://github.com/vlc1/StencilCore.jl/actions/workflows/CI.yml?query=branch%3Amain)
+[![Dev](https://img.shields.io/badge/docs-dev-blue.svg)](https://vlc1.github.io/StencilCore.jl/dev/)
 
 The shared **type vocabulary** at the root of a three-package stack for
 variable-coefficient Cartesian stencils and the symbolic algebra that builds
