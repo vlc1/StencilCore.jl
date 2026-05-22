@@ -1,5 +1,7 @@
 # StencilCore.jl
 
+[![Build Status](https://github.com/vlc1/StencilCore.jl/actions/workflows/CI.yml/badge.svg?branch=main)](https://github.com/vlc1/StencilCore.jl/actions/workflows/CI.yml?query=branch%3Amain)
+
 The shared **type vocabulary** at the root of a three-package stack for
 variable-coefficient Cartesian stencils and the symbolic algebra that builds
 them. StencilCore owns the types; it has no assembly and depends only on
