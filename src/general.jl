@@ -1,10 +1,12 @@
 # General offset-list stencil + narrowing to LinearStencil / StarStencil.
 #
 # `Stencil` is the lingua franca produced by symbolic differentiation: an
-# explicit reverse-lex-ordered list of `StaticShift` offsets plus a matching
-# `SVector{M}`-valued coefficient. It is not assembled directly; `as_linear` /
-# `as_star` narrow it to an optimized, assemblable stencil by a shift-pattern
-# match and a verbatim `term` copy (the layouts coincide by construction).
+# explicit reverse-lex-ordered list of `StaticShift` offsets plus a *matching
+# tuple of per-offset coefficients* (structure-of-arrays — the `terms` layout
+# mirrors `shifts`). It is not assembled directly; `as_linear` / `as_star`
+# narrow it to an optimized, assemblable `LinearStencil` / `StarStencil`, which
+# is the point where the representation switches to array-of-structs (a single
+# `SVector{M}`-valued coefficient) via `_interlace`.
 
 # Single-axis decomposition of a StaticShift (the zero shift → axis 0, offset 0).
 _naxes(::StaticShift{P}) where {P} = length(P.parameters)
@@ -14,56 +16,75 @@ _shift_off(::StaticShift{Tuple{}}) = 0
 _shift_off(::StaticShift{Tuple{StaticPair{D, O}}}) where {D, O} = O
 
 """
-    Stencil{M, C<:NTuple{M,StaticShift}, E<:SVector{M}, A<:ArrayOrTermLike{E}, S<:AccessStyle}
+    Stencil{M, C<:NTuple{M,StaticShift}, A<:NTuple{M,ArrayOrTermLike}, S<:AccessStyle}
         <: AbstractStencil{S}
 
-General offset-list stencil: `M` offsets `shifts` (reverse-lexicographically
-ordered) and a matching `SVector{M}`-valued coefficient `term`. The form
-produced by symbolic differentiation; **not assembled directly** — narrowed to
-a `LinearStencil` / `StarStencil` via [`as_linear`](@ref) / [`as_star`](@ref),
-which reuse `term` verbatim.
+General offset-list stencil in **structure-of-arrays** form: `M` offsets
+`shifts` (reverse-lexicographically ordered) and a parallel `M`-tuple `terms`
+of per-offset coefficients (`terms[k]` is the coefficient at offset
+`shifts[k]`). Each coefficient is an `ArrayOrTermLike` — a concrete array or a
+symbolic term — with a *scalar* element type.
+
+The form produced by symbolic differentiation; **not assembled directly** —
+narrowed to a `LinearStencil` / `StarStencil` via [`as_linear`](@ref) /
+[`as_star`](@ref), which is where the layout switches to array-of-structs (one
+`SVector{M}`-valued coefficient) by `_interlace`ing `terms`.
 """
-struct Stencil{M, C<:NTuple{M, StaticShift}, E<:SVector{M}, A<:ArrayOrTermLike{E}, S<:AccessStyle} <: AbstractStencil{S}
+struct Stencil{M, C<:NTuple{M, StaticShift}, A<:NTuple{M, ArrayOrTermLike}, S<:AccessStyle} <: AbstractStencil{S}
     shifts::C
-    term::A
+    terms::A
 
     # Access style via a positional Type tag (S is the trailing type param).
     function Stencil(
         ::Type{S},
         shifts::NTuple{M, StaticShift},
-        term::AbstractArray{SVector{M, T}, N},
-    ) where {S<:AccessStyle, M, T, N}
-        new{M, typeof(shifts), SVector{M, T}, typeof(term), S}(shifts, term)
-    end
-
-    function Stencil(
-        ::Type{S},
-        shifts::NTuple{M, StaticShift},
-        term::AbstractTerm{SVector{M, T}},
-    ) where {S<:AccessStyle, M, T}
-        new{M, typeof(shifts), SVector{M, T}, typeof(term), S}(shifts, term)
+        terms::NTuple{M, ArrayOrTermLike},
+    ) where {S<:AccessStyle, M}
+        M >= 1 || throw(ArgumentError("Stencil needs at least one offset"))
+        new{M, typeof(shifts), typeof(terms), S}(shifts, terms)
     end
 end
 
 # Default outer constructor: ColumnAccess.
-Stencil(shifts, term) = Stencil(ColumnAccess, shifts, term)
+Stencil(shifts, terms) = Stencil(ColumnAccess, shifts, terms)
 
-# Friendly error when shift count and SVector length disagree (or bad types).
-function Stencil(::Type{S}, shifts, term) where {S<:AccessStyle}
+# Friendly error when shifts and terms disagree in length, or are not tuples.
+function Stencil(::Type{S}, shifts, terms) where {S<:AccessStyle}
     throw(ArgumentError(
-        "Stencil needs shifts::NTuple{M, StaticShift} and term an AbstractArray " *
-        "or AbstractTerm whose elements are SVector{M} with matching M " *
-        "(got $(typeof(shifts)) and $(typeof(term)))"))
+        "Stencil needs shifts::NTuple{M, StaticShift} and terms::NTuple{M, " *
+        "ArrayOrTermLike} of equal length M (got $(typeof(shifts)) and " *
+        "$(typeof(terms)))"))
+end
+
+"""
+    _interlace(terms::NTuple{M, ArrayOrTermLike}) -> ArrayOrTermLike{<:SVector{M}}
+
+Combine `M` per-offset (structure-of-arrays) coefficients into the single
+array-of-structs `SVector{M}`-valued coefficient that `LinearStencil` /
+`StarStencil` store — the representation switch performed by narrowing.
+
+The concrete-array method (stack element-wise into an array of `SVector{M}`)
+lives here; the symbolic-term method (`Term(SVector, terms)`) is added by the
+StencilCalculus package.
+"""
+function _interlace end
+
+function _interlace(terms::NTuple{M, AbstractArray}) where {M}
+    ax = axes(first(terms))
+    all(t -> axes(t) == ax, terms) || throw(ArgumentError(
+        "coefficient arrays must share axes to interlace into an SVector coefficient"))
+    map(SVector, terms...)
 end
 
 """
     as_linear(st::Stencil{…,S}) -> LinearStencil{D, …, S}
 
 Narrow a `Stencil` whose offsets are single-axis (same axis `D`) and contiguous
-to the equivalent `LinearStencil{D}`, reusing `term` verbatim. Throws if the
-offsets are multi-axis, span several axes, or are not contiguous-ascending.
+to the equivalent `LinearStencil{D}`, interlacing `terms` into the single
+`SVector{D}`-valued coefficient. Throws if the offsets are multi-axis, span
+several axes, or are not contiguous-ascending.
 """
-function as_linear(st::Stencil{M, C, E, A, S}) where {M, C, E, A, S}
+function as_linear(st::Stencil{M, C, A, S}) where {M, C, A, S}
     shifts = st.shifts
     all(s -> _naxes(s) <= 1, shifts) || throw(ArgumentError(
         "Stencil offsets are not single-axis; cannot narrow to LinearStencil"))
@@ -85,7 +106,7 @@ function as_linear(st::Stencil{M, C, E, A, S}) where {M, C, E, A, S}
         offs[i] == offs[i - 1] + 1 || throw(ArgumentError(
             "Stencil offsets are not contiguous-ascending; cannot narrow to LinearStencil"))
     end
-    LinearStencil{D}(S, SUnitRange(offs[1], offs[M]), st.term)
+    LinearStencil{D}(S, SUnitRange(offs[1], offs[M]), _interlace(st.terms))
 end
 
 # Expected (axis, offset) at slot k of the canonical reverse-lex star of
@@ -109,9 +130,10 @@ end
 
 Narrow a `Stencil` whose offsets form the canonical reverse-lex star pattern
 (every axis `1..N` with symmetric reach `−L..L`, plus the diagonal) to the
-equivalent `StarStencil{L}`, reusing `term` verbatim. Throws otherwise.
+equivalent `StarStencil{L}`, interlacing `terms` into the single `SVector{M}`-
+valued coefficient. Throws otherwise.
 """
-function as_star(st::Stencil{M, C, E, A, S}) where {M, C, E, A, S}
+function as_star(st::Stencil{M, C, A, S}) where {M, C, A, S}
     shifts = st.shifts
     all(s -> _naxes(s) <= 1, shifts) || throw(ArgumentError(
         "Stencil offsets are not single-axis; cannot narrow to StarStencil"))
@@ -124,5 +146,5 @@ function as_star(st::Stencil{M, C, E, A, S}) where {M, C, E, A, S}
         (_shift_axis(shifts[k]) == ax && _shift_off(shifts[k]) == off) || throw(ArgumentError(
             "Stencil offsets do not match the canonical star order at slot $k"))
     end
-    StarStencil{L}(S, st.term)
+    StarStencil{L}(S, _interlace(st.terms))
 end
