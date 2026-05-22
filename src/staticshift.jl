@@ -121,7 +121,13 @@ function Base.show(io::IO, s::StaticShift)
     end
 end
 
-# Zero shift (identity) and basis shifts ê₁ … ê₉ (unit offset per dim).
+"""
+    ô, ê₁ … ê₉
+
+Predefined [`StaticShift`](@ref) constants: `ô` is the zero shift (identity),
+and `êᵢ` is the unit offset along axis `i`. Combine them with the `+`/`-`/`*Int`
+algebra to write lattice offsets, e.g. `-2ê₁`, `3ê₁ + ê₂`.
+"""
 const ô  = StaticShift()
 const ê₁ = StaticShift((StaticPair{1, 1}(),))
 const ê₂ = StaticShift((StaticPair{2, 1}(),))
