@@ -9,6 +9,8 @@ include("staticshift.jl")
 include("scalars.jl")
 include("scalar_trees.jl")
 include("scalar_simplify.jl")
+include("scalar_materialize.jl")
+include("scalar_differentiate.jl")
 include("stencils.jl")
 include("general.jl")
 

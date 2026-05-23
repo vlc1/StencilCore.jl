@@ -280,6 +280,60 @@ StencilCore._interlace(::NTuple{M, _DummyTerm}) where {M} = _DummyTerm{SVector{M
         @test simp((τ + N) * (Const(2.0) + Const(3.0))) == τ * Const(5.0)
     end
 
+    @testset "AbstractScalar materialize" begin
+        τ = Symbolic{:τ, Float64}()
+        mat = StencilCore.materialize
+
+        # Leaves.
+        @test mat(Const(2.5)) === 2.5
+        @test mat(τ, (τ = 7.0,)) === 7.0
+        @test mat(Null{Float64}()) === 0.0
+        @test mat(Unity{Int}()) === 1
+        # Scalar tree.
+        @test mat(τ * Const(3.0), (τ = 4.0,)) === 12.0
+        @test mat(τ + Const(1.0), (τ = 2.0,)) === 3.0
+        @test mat(τ * τ + τ, (τ = 5.0,)) === 30.0
+        # _scalar_body_expr round-trips a representative tree.
+        e = StencilCore._scalar_body_expr(τ * Const(3.0))
+        @test e isa Expr
+        # Evaluate the Expr by binding args.
+        let args = (τ = 4.0,)
+            @test Core.eval(@__MODULE__, :(let args = $(args); $e end)) === 12.0
+        end
+    end
+
+    @testset "AbstractScalar differentiate" begin
+        τ = Symbolic{:τ, Float64}(); α = Const(2.0)
+        η = Symbolic{:η, Float64}()
+        diff = StencilCore.differentiate
+
+        # Leaves.
+        @test diff(τ, τ) === Unity{Float64}()
+        @test diff(Const(2.0), τ) === Null{Float64}()
+        @test diff(η, τ) === Null{Float64}()
+        @test diff(Null{Float64}(), τ) === Null{Float64}()
+        @test diff(Unity{Float64}(), τ) === Null{Float64}()
+
+        # Sum rule: ∂(τ + α)/∂τ = 1.
+        @test diff(τ + α, τ) === Unity{Float64}()
+        # Product rule: ∂(α * τ)/∂τ = α.
+        @test diff(α * τ, τ) === α
+        @test diff(τ * α, τ) === α
+        # ∂(τ²)/∂τ = τ + τ  (no like-term folding).
+        @test diff(τ * τ, τ) == Scalar(+, (τ, τ))
+
+        # Chain rule via primitive: ∂sin(τ)/∂τ = cos(τ).
+        @test diff(sin(τ), τ) == Scalar(cos, (τ,))
+        # ∂exp(τ)/∂τ = exp(τ).
+        @test diff(exp(τ), τ) == Scalar(exp, (τ,))
+
+        # No dependence ⇒ Null with the right eltype.
+        @test diff(α + η, τ) === Null{Float64}()
+
+        # No rule for an arbitrary primitive ⇒ throws when the chain rule fires.
+        @test_throws ArgumentError diff(Scalar(tan, (τ,)), τ)
+    end
+
     @testset "AbstractScalar AbstractTrees plumbing" begin
         τ = Symbolic{:τ, Float64}()
         @test AbstractTrees.nodevalue(τ) === :τ
