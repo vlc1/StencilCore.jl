@@ -10,6 +10,10 @@ makedocs(;
         "API reference" => "api.md",
     ],
     checkdocs = :none,
+    # Some docstrings (Symbolic, Null, Unity, Scalar, @symbolic, simplify,
+    # materialize, differentiate) name their term-side analogues — which live
+    # in StencilCalculus, so @ref cannot resolve them here.
+    warnonly = [:cross_references],
 )
 
 deploydocs(;

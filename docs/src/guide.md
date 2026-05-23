@@ -24,6 +24,60 @@ using StencilCore
 Same-axis pairs are summed, zero offsets dropped, and the result is sorted by
 axis — so the representation is canonical.
 
+## The scalar algebra
+
+A scalar — a timestep, a Reynolds number, a literal `2.0` — has no spatial
+extent. StencilCore models it directly with [`AbstractScalar{T}`](@ref) and a
+small CAS that mirrors the term-side one. Five concrete types:
+
+- [`Symbolic{S,T}`](@ref) — a named substitution leaf, like a `Slot` but with
+  one materialized value instead of an array.
+- [`Const{T}`](@ref) — a literal leaf carrying its `val::T`.
+- [`Scalar{F,A,T}`](@ref) — an interior tree node `fn(args…)`.
+- [`Null{T}`](@ref) / [`Unity{T}`](@ref) — type-level structural `0` / `1`.
+
+The operator overloads build `Scalar` trees, with numeric literals
+canonicalising to `Const`:
+
+```julia
+@symbolic τ Float64
+@const α 2.0
+
+τ * α + α              # Scalar(+, (Scalar(*, (τ, α)), α))
+typeof(τ * α + α)      # Scalar{typeof(+), …, Float64}
+eltype(τ * α + α)      # Float64
+```
+
+[`simplify`](@ref) post-walks a scalar tree with the same rule-rewriter shape
+as the term side. Identities (`Null + x → x`, `x * Unity → x`, `x * Null →
+Null`) are **type-dispatched**; constant folding is value-based on all-`Const`
+arguments:
+
+```julia
+simplify(Null{Float64}() + τ)            # τ
+simplify(τ * Unity{Float64}())           # τ
+simplify(Const(2.0) + Const(3.0))        # Const(5.0)
+```
+
+[`differentiate`](@ref) on a scalar tree returns an `AbstractScalar`. With no
+spatial offsets there is no `Stencil` — just the chain rule:
+
+```julia
+@symbolic τ Float64
+differentiate(sin(τ) * τ, τ)             # cos(τ)*τ + sin(τ)*1 simplified
+differentiate(Const(2.0), τ)             # Null{Float64}() — no dependence
+```
+
+[`materialize`](@ref) reduces a scalar tree to a single value, substituting
+`Symbolic` leaves from a `NamedTuple`:
+
+```julia
+materialize(τ * Const(3.0), (τ = 4.0,))  # 12.0
+```
+
+These scalars become **term coefficients** once StencilCalculus wraps them in
+a `Fill` — see its docs for the bridge.
+
 ## Linear and star stencils
 
 A [`LinearStencil`](@ref) has contiguous offsets along one mesh axis. Its
