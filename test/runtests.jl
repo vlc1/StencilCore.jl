@@ -245,6 +245,41 @@ StencilCore._interlace(::NTuple{M, _DummyTerm}) where {M} = _DummyTerm{SVector{M
         @test repr(Scalar(exp, (τ,))) == "exp(τ)"     # call form
     end
 
+    @testset "AbstractScalar simplify" begin
+        τ = Symbolic{:τ, Float64}()
+        N = Null{Float64}(); U = Unity{Float64}()
+        simp = StencilCore.simplify
+
+        # Leaves are already normal form.
+        @test simp(τ) === τ
+        @test simp(Const(2.0)) === Const(2.0)
+        @test simp(N) === N
+        @test simp(U) === U
+
+        # Identity / annihilator on Null/Unity (by type, not value).
+        @test simp(N + τ) === τ
+        @test simp(τ + N) === τ
+        @test simp(N - τ) === Scalar(-, (τ,))          # 0 - b = -b
+        @test simp(τ - N) === τ
+        @test simp(τ * N) === N
+        @test simp(N * τ) === N
+        @test simp(τ * U) === τ
+        @test simp(U * τ) === τ
+        @test simp(τ / U) === τ
+        @test simp(N / τ) === N
+        @test simp(-(-τ)) === τ                         # double negation
+
+        # Const folding — produces Const, NOT Null/Unity (strict, no auto-fold).
+        @test simp(Const(2.0) + Const(3.0)) === Const(5.0)
+        @test simp(Const(2.0) * Const(0.0)) === Const(0.0)
+        @test !(simp(Const(2.0) * Const(0.0)) isa Null)
+        @test simp(Const(6.0) / Const(2.0)) === Const(3.0)
+        @test simp(Const(2)^Const(3)) === Const(8)
+
+        # Mixed: identity collapses, then fold collapses.
+        @test simp((τ + N) * (Const(2.0) + Const(3.0))) == τ * Const(5.0)
+    end
+
     @testset "AbstractScalar AbstractTrees plumbing" begin
         τ = Symbolic{:τ, Float64}()
         @test AbstractTrees.nodevalue(τ) === :τ
