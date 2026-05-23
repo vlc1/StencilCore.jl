@@ -24,6 +24,9 @@ export AbstractTerm, ArrayOrTermLike
 export AbstractScalar, Symbolic, Const, Null, Unity, Scalar
 export @symbolic, var"@const"
 
+# CAS operations whose generic Calculus extends with AbstractTerm methods.
+export simplify, materialize, differentiate, derivative
+
 # Type-level offsets.
 export StaticPair, SPair, StaticShift, SShift, dim, offset
 export ô, ê₁, ê₂, ê₃, ê₄, ê₅, ê₆, ê₇, ê₈, ê₉

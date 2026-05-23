@@ -17,21 +17,25 @@ function derivative end
 
 _se(args) = mapreduce(eltype, promote_type, args)   # promoted scalar eltype
 
-derivative(::typeof(+), ::Val,    args...) = Unity{_se(args)}()
-derivative(::typeof(-), ::Val{1}, x)       = Scalar(-, (Unity{eltype(x)}(),))
-derivative(::typeof(-), ::Val{1}, x, y)    = Unity{_se((x, y))}()
-derivative(::typeof(-), ::Val{2}, x, y)    = Scalar(-, (Unity{_se((x, y))}(),))
-derivative(::typeof(*), ::Val{1}, x, y)    = y
-derivative(::typeof(*), ::Val{2}, x, y)    = x
-derivative(::typeof(/), ::Val{1}, x, y)    = Scalar(/, (Unity{_se((x, y))}(), y))
-derivative(::typeof(/), ::Val{2}, x, y)    = Scalar(-, (Scalar(/, (x, Scalar(*, (y, y)))),))
-derivative(::typeof(^), ::Val{1}, x, n)    = Scalar(*, (n, Scalar(^, (x, Scalar(-, (n, Unity{_se((n,))}()))))))
-derivative(::typeof(sin),  ::Val{1}, x)    = Scalar(cos, (x,))
-derivative(::typeof(cos),  ::Val{1}, x)    = Scalar(-, (Scalar(sin, (x,)),))
-derivative(::typeof(exp),  ::Val{1}, x)    = Scalar(exp, (x,))
-derivative(::typeof(log),  ::Val{1}, x)    = Scalar(/, (Unity{_se((x,))}(), x))
-derivative(::typeof(sqrt), ::Val{1}, x)    = Scalar(/, (Unity{_se((x,))}(), Scalar(*, (Const(2), Scalar(sqrt, (x,))))))
-derivative(f, ::Val, args...) =
+# Dispatch every entry on Vararg{AbstractScalar} so StencilCalculus can add its
+# disjoint Vararg{AbstractTerm} methods to the same generic.
+derivative(::typeof(+), ::Val,    args::Vararg{AbstractScalar}) = Unity{_se(args)}()
+derivative(::typeof(-), ::Val{1}, x::AbstractScalar)            = Scalar(-, (Unity{eltype(x)}(),))
+derivative(::typeof(-), ::Val{1}, x::AbstractScalar, y::AbstractScalar) = Unity{_se((x, y))}()
+derivative(::typeof(-), ::Val{2}, x::AbstractScalar, y::AbstractScalar) = Scalar(-, (Unity{_se((x, y))}(),))
+derivative(::typeof(*), ::Val{1}, x::AbstractScalar, y::AbstractScalar) = y
+derivative(::typeof(*), ::Val{2}, x::AbstractScalar, y::AbstractScalar) = x
+derivative(::typeof(/), ::Val{1}, x::AbstractScalar, y::AbstractScalar) = Scalar(/, (Unity{_se((x, y))}(), y))
+derivative(::typeof(/), ::Val{2}, x::AbstractScalar, y::AbstractScalar) = Scalar(-, (Scalar(/, (x, Scalar(*, (y, y)))),))
+derivative(::typeof(^), ::Val{1}, x::AbstractScalar, n::AbstractScalar) =
+    Scalar(*, (n, Scalar(^, (x, Scalar(-, (n, Unity{_se((n,))}()))))))
+derivative(::typeof(sin),  ::Val{1}, x::AbstractScalar) = Scalar(cos, (x,))
+derivative(::typeof(cos),  ::Val{1}, x::AbstractScalar) = Scalar(-, (Scalar(sin, (x,)),))
+derivative(::typeof(exp),  ::Val{1}, x::AbstractScalar) = Scalar(exp, (x,))
+derivative(::typeof(log),  ::Val{1}, x::AbstractScalar) = Scalar(/, (Unity{_se((x,))}(), x))
+derivative(::typeof(sqrt), ::Val{1}, x::AbstractScalar) =
+    Scalar(/, (Unity{_se((x,))}(), Scalar(*, (Const(2), Scalar(sqrt, (x,))))))
+derivative(f, ::Val, args::Vararg{AbstractScalar}) =
     throw(ArgumentError("no scalar derivative rule for $(f)"))
 
 # --- Leaf rules ------------------------------------------------------------
