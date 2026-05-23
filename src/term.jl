@@ -24,6 +24,15 @@ abstract type AbstractTerm{T} end
 Base.eltype(::Type{<:AbstractTerm{T}}) where {T} = T
 Base.eltype(t::AbstractTerm) = eltype(typeof(t))
 
+# Shared concrete-eltype guard, used by every leaf type whose `T` it
+# materializes / assembles into (Slot, Symbolic, Const, Null, Unity, …).
+@inline function _assert_concrete(name::Symbol, ::Type{T}) where {T}
+    isconcretetype(T) || throw(ArgumentError(
+        "$(name) needs a concrete element type; got $(T). Use e.g. Float64 " *
+        "(the default), Float32, or a concrete SVector."))
+    return nothing
+end
+
 """
     ArrayOrTermLike{T} = Union{AbstractArray{T}, AbstractTerm{T}}
 

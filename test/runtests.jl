@@ -1,5 +1,6 @@
 using StencilCore
 using Test
+using AbstractTrees
 using StaticArrays: SUnitRange, SVector
 
 # Structs must be defined at top level (not inside @testset scopes).
@@ -164,6 +165,97 @@ StencilCore._interlace(::NTuple{M, _DummyTerm}) where {M} = _DummyTerm{SVector{M
         @test_throws ArgumentError as_linear(gap)
         # Shift count ≠ terms count ⇒ friendly ctor error.
         @test_throws ArgumentError Stencil(RowAccess, (-ê₁, ô), (fill(1.0, 5), fill(2.0, 5), fill(3.0, 5)))
+    end
+
+    @testset "AbstractScalar leaves + eltype" begin
+        τ = Symbolic{:τ, Float64}()
+        @test τ isa AbstractScalar{Float64}
+        @test eltype(τ) === Float64
+        @test Symbolic{:τ}() isa Symbolic{:τ, Float64}                      # default T = Float64
+        @test eltype(Symbolic{:τ, Float32}()) === Float32
+
+        @test eltype(Const(2.0)) === Float64
+        @test Const(3).val === 3
+        @test Const{Int}(7).val === 7
+
+        @test eltype(Null{Float64}()) === Float64
+        @test eltype(Unity{Int}()) === Int
+
+        # T must be concrete.
+        @test_throws ArgumentError Symbolic{:s, Real}()
+        @test_throws ArgumentError Const{Number}(1)
+        @test_throws ArgumentError Null{Integer}()
+        @test_throws ArgumentError Unity{Number}()
+    end
+
+    @testset "@symbolic / @const macros" begin
+        @symbolic τ
+        @symbolic dt Float32
+        @const α 1
+        @const β 2.5
+        @test τ === Symbolic{:τ, Float64}()
+        @test dt === Symbolic{:dt, Float32}()
+        @test α === Const(1)
+        @test β === Const(2.5)
+    end
+
+    @testset "Scalar tree node + operator overloads" begin
+        τ = Symbolic{:τ, Float64}(); α = Const(2)
+        # Binary op among AbstractScalars builds a Scalar node.
+        s = τ * α
+        @test s isa Scalar{typeof(*)}
+        @test eltype(s) === Float64                                          # promotes Float64 ↔ Int
+        @test s.args === (τ, α)
+        # Numeric literal canonicalises to Const at the operator boundary.
+        s2 = τ + 3
+        @test s2 isa Scalar{typeof(+)}
+        @test s2.args[2] === Const(3)
+        s3 = 4 - τ
+        @test s3.args[1] === Const(4)
+        # Unary.
+        @test (-τ) isa Scalar{typeof(-)}
+        @test sin(τ) isa Scalar{typeof(sin)}
+
+        # Union{}-result Scalars throw at construction.
+        @test_throws ArgumentError Scalar(+, (Symbolic{:s, String}(), Symbolic{:n, Float64}()))
+    end
+
+    @testset "AbstractScalar shift-invariance" begin
+        τ = Symbolic{:τ, Float64}(); α = Const(2.0); n = Null{Float64}(); u = Unity{Float64}()
+        @test τ[] === τ
+        @test τ[ê₁] === τ
+        @test α[3ê₁ + ê₂] === α
+        @test n[ê₁] === n
+        @test u[ô] === u
+        # Scalar tree node is also a scalar; it is shift-invariant via the
+        # AbstractScalar method.
+        s = τ * α
+        @test s[ê₁] === s
+    end
+
+    @testset "AbstractScalar show" begin
+        τ = Symbolic{:τ, Float64}()
+        @test repr(τ) == "τ"
+        @test repr(Const(2.0)) == "2.0"
+        @test repr(Const(3)) == "3"
+        @test repr(Null{Float64}()) == "0"            # type-agnostic glyph
+        @test repr(Unity{Float64}()) == "1"
+        @test repr(τ * Const(2.0)) == "(τ * 2.0)"     # infix
+        @test repr(-τ) == "-τ"
+        @test repr(Scalar(exp, (τ,))) == "exp(τ)"     # call form
+    end
+
+    @testset "AbstractScalar AbstractTrees plumbing" begin
+        τ = Symbolic{:τ, Float64}()
+        @test AbstractTrees.nodevalue(τ) === :τ
+        @test AbstractTrees.children(τ) === ()
+        @test AbstractTrees.nodevalue(Const(2.5)) === 2.5
+        @test AbstractTrees.children(Const(2.5)) === ()
+        @test AbstractTrees.nodevalue(Null{Float64}()) === 0.0
+        @test AbstractTrees.nodevalue(Unity{Int}()) === 1
+        s = τ * Const(2.0)
+        @test AbstractTrees.nodevalue(s) === *
+        @test AbstractTrees.children(s) === s.args
     end
 
 end

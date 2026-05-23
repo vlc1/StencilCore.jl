@@ -1,10 +1,13 @@
 module StencilCore
 
+using AbstractTrees
 using StaticArrays: SUnitRange, SVector
 
 include("access.jl")
 include("term.jl")
 include("staticshift.jl")
+include("scalars.jl")
+include("scalar_trees.jl")
 include("stencils.jl")
 include("general.jl")
 
@@ -13,6 +16,10 @@ export AccessStyle, ColumnAccess, RowAccess, AbstractStencil
 
 # Term-like supertype shared by arrays and symbolic terms.
 export AbstractTerm, ArrayOrTermLike
+
+# Scalar algebra: abstract supertype + concrete leaves and tree node.
+export AbstractScalar, Symbolic, Const, Null, Unity, Scalar
+export @symbolic, var"@const"
 
 # Type-level offsets.
 export StaticPair, SPair, StaticShift, SShift, dim, offset
