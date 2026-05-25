@@ -6,11 +6,10 @@
 #
 # Concrete subtypes mirror the term-side ones:
 #   Symbolic ↔ Slot   (named, runtime-substituted leaf)
-#   Const    ↔ Fill   (literal carrier — Const lives in scalar-land, Fill in
-#                      term-land and may wrap a Const)
+#   Scaling  ↔ Fill   (literal carrier — Scaling{V,T} represents `val * one(T)`,
+#                      collapsing the former Const/Unity duet into one type)
 #   Scalar   ↔ Term   (interior tree node)
 #   Null     ↔ Zero   (additive identity / structural zero)
-#   Unity    ↔ One    (multiplicative identity / structural one)
 #
 # `T` is required to be concrete (`_assert_concrete`), matching the term side.
 
@@ -19,8 +18,8 @@
 
 Supertype for cell-level scalar expressions. Reaches a single value of
 type `T` at `materialize` time (no axes). Concrete subtypes:
-[`Symbolic`](@ref), [`Const`](@ref), [`Scalar`](@ref), [`Null`](@ref),
-[`Unity`](@ref). Sibling of, **not** subtype of, [`AbstractTerm`](@ref).
+[`Symbolic`](@ref), [`Scaling`](@ref), [`Scalar`](@ref), [`Null`](@ref).
+Sibling of, **not** subtype of, [`AbstractTerm`](@ref).
 """
 abstract type AbstractScalar{T} end
 
@@ -40,16 +39,37 @@ end
 Symbolic{S}() where {S} = Symbolic{S, Float64}()
 
 """
-    Const(value) / Const{T}(value)
+    Scaling{V, T}(val) / Scaling(val) / Scaling(T::Type)
 
-Literal scalar leaf carrying its `value` in a runtime field. The element
-type is `typeof(value)` (always concrete).
+Literal scalar leaf representing the value `val * one(T)`. `V` is the type of
+the stored `val` and must satisfy `V <: eltype(T)` (for type stability at
+materialize time). `Λ` is an alias.
+
+Constructors:
+- `Scaling{T}(val)`            — explicit element type `T`.
+- `Scaling(val)`               — `T = typeof(val)`.
+- `Scaling(T::Type = Float64)` — `val = one(T)` (the multiplicative identity).
 """
-struct Const{T} <: AbstractScalar{T}
-    val::T
-    Const{T}(val) where {T} = (_assert_concrete(:Const, T); new{T}(val))
+struct Scaling{V, T} <: AbstractScalar{T}
+    val::V
+
+    function Scaling{T}(val::V) where {V, T}
+        _assert_concrete(:Scaling, T)
+        V <: eltype(T) || throw(ArgumentError(
+            "Scaling: V=$V is not a subtype of eltype(T)=$(eltype(T))"))
+        new{V, T}(val)
+    end
 end
-Const(val) = Const{typeof(val)}(val)
+
+"""
+    Λ
+
+Alias for [`Scaling`](@ref).
+"""
+const Λ = Scaling
+
+Scaling(T::Type = Float64) = Scaling{T}(one(T))
+Scaling(val::V) where {V}  = Scaling{V}(val)
 
 """
     Null{T}()
@@ -62,17 +82,8 @@ dispatch.
 struct Null{T} <: AbstractScalar{T}
     Null{T}() where {T} = (_assert_concrete(:Null, T); new{T}())
 end
-
-"""
-    Unity{T}()
-
-Type-level multiplicative identity for [`AbstractScalar`](@ref): the
-scalar-side analogue of [`AbstractTerm`](@ref) `One`. Materializes to
-`one(T)`.
-"""
-struct Unity{T} <: AbstractScalar{T}
-    Unity{T}() where {T} = (_assert_concrete(:Unity, T); new{T}())
-end
+Null(T::Type)       = Null{T}()
+Null(::T) where {T} = Null{T}()
 
 """
     Scalar(fn, args::Tuple{Vararg{AbstractScalar}})
@@ -98,30 +109,26 @@ function Scalar(fn::F, args::A) where {F, A<:Tuple{Vararg{AbstractScalar}}}
 end
 
 # Promote a numeric literal to a scalar leaf; used by operator overloads on the
-# Number↔AbstractScalar boundary. Always wraps as `Const` (the literal leaf).
+# Number↔AbstractScalar boundary. Always wraps as `Scaling` (the literal leaf).
 asscalar(s::AbstractScalar) = s
-asscalar(x::Number)         = Const(x)
-Base.convert(::Type{<:AbstractScalar}, x::Number) = Const(x)
-
-# Shift-invariance: a scalar has no spatial position, so any shift is a no-op.
-Base.getindex(s::AbstractScalar)                = s
-Base.getindex(s::AbstractScalar, ::StaticShift) = s
+asscalar(x::Number)         = Scaling(x)
+Base.convert(::Type{<:AbstractScalar}, x::Number) = Scaling(x)
 
 # --- Operator overloads ------------------------------------------------------
 # Every binary op among {AbstractScalar, Number} (with at least one
 # AbstractScalar) lifts into a `Scalar` tree. Numeric literals canonicalise to
-# `Const` first.
+# `Scaling` first.
 
 for op in (:+, :-, :*, :/, :\, :^, :min, :max)
     @eval Base.$op(a::AbstractScalar, b::AbstractScalar) = Scalar($op, (a, b))
-    @eval Base.$op(a::AbstractScalar, b::Number)         = Scalar($op, (a, Const(b)))
-    @eval Base.$op(a::Number,         b::AbstractScalar) = Scalar($op, (Const(a), b))
+    @eval Base.$op(a::AbstractScalar, b::Number)         = Scalar($op, (a, Scaling(b)))
+    @eval Base.$op(a::Number,         b::AbstractScalar) = Scalar($op, (Scaling(a), b))
 end
 for op in (:-, :+, :exp, :sin, :cos, :tan, :log, :sqrt, :abs)
     @eval Base.$op(a::AbstractScalar) = Scalar($op, (a,))
 end
 
-# --- Constructor macros ------------------------------------------------------
+# --- Constructor macro -------------------------------------------------------
 
 """
     @symbolic name [T = Float64]
@@ -135,23 +142,12 @@ macro symbolic(name, T = :Float64)
     :($(esc(name)) = $Symbolic{$(QuoteNode(name)), $(esc(T))}())
 end
 
-"""
-    @const name value
-
-Bind `name` to `Const(value)`. `@const α 1` ≡ `α = Const(1)`. Defined via the
-`var"@const"` function form because `const` is a reserved word (so a plain
-`macro const` would not parse).
-"""
-function var"@const"(__source__::LineNumberNode, __module__::Module, name, value)
-    name isa Symbol || throw(ArgumentError("@const expects a variable name, got `$(name)`"))
-    :($(esc(name)) = $Const($(esc(value))))
-end
-
 # --- Display -----------------------------------------------------------------
 # Scalars render without going through `simplify` (no rewriter at this layer
-# yet). Leaves: Symbolic prints its symbol; Const prints its value; Null/Unity
-# print `0`/`1` glyphs (type-agnostic, matching the term-side Zero/One).
-# Scalar interior nodes render infix when the op is in `_INFIX`, else as a call.
+# yet). Leaves: Symbolic prints its symbol; Scaling prints its stored `val`;
+# Null prints the `0` glyph (type-agnostic, matching the term-side Zero).
+# Scalar interior nodes render infix when the op is in `_INFIX`, else as a
+# call.
 
 const _SCALAR_INFIX = (:+, :-, :*, :/, :\, :^)
 _scalar_callsym(f) = nameof(f)
@@ -159,9 +155,8 @@ _scalar_callsym(f) = nameof(f)
 Base.show(io::IO, s::AbstractScalar) = _scalar_show(io, s)
 
 _scalar_show(io::IO, ::Symbolic{S}) where {S} = print(io, S)
-_scalar_show(io::IO, c::Const)                = show(io, c.val)
+_scalar_show(io::IO, s::Scaling)              = show(io, s.val)
 _scalar_show(io::IO, ::Null)                  = print(io, '0')
-_scalar_show(io::IO, ::Unity)                 = print(io, '1')
 
 function _scalar_show(io::IO, s::Scalar)
     op, args = _scalar_callsym(s.fn), s.args

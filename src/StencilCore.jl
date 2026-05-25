@@ -7,11 +7,11 @@ include("access.jl")
 include("term.jl")
 include("staticshift.jl")
 include("scalars.jl")
-include("scalar_trees.jl")
-include("scalar_simplify.jl")
-include("scalar_materialize.jl")
-include("scalar_differentiate.jl")
-include("stencils.jl")
+include("trees.jl")
+include("simplify.jl")
+include("materialize.jl")
+include("differentiate.jl")
+include("structured.jl")
 include("general.jl")
 
 # Access-style trait + abstract stencil supertype.
@@ -21,8 +21,8 @@ export AccessStyle, ColumnAccess, RowAccess, AbstractStencil
 export AbstractTerm, ArrayOrTermLike
 
 # Scalar algebra: abstract supertype + concrete leaves and tree node.
-export AbstractScalar, Symbolic, Const, Null, Unity, Scalar
-export @symbolic, var"@const"
+export AbstractScalar, Symbolic, Scaling, Λ, Null, Scalar
+export @symbolic
 
 # CAS operations whose generic Calculus extends with AbstractTerm methods.
 export simplify, materialize, differentiate, derivative

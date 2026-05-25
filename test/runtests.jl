@@ -174,44 +174,51 @@ StencilCore._interlace(::NTuple{M, _DummyTerm}) where {M} = _DummyTerm{SVector{M
         @test Symbolic{:τ}() isa Symbolic{:τ, Float64}                      # default T = Float64
         @test eltype(Symbolic{:τ, Float32}()) === Float32
 
-        @test eltype(Const(2.0)) === Float64
-        @test Const(3).val === 3
-        @test Const{Int}(7).val === 7
+        # Scaling: V<:eltype(T), Λ alias, Scaling(T)→one(T).
+        @test eltype(Scaling(2.0)) === Float64
+        @test Scaling(3).val === 3
+        @test Scaling{Int}(7).val === 7
+        @test Λ === Scaling
+        @test Scaling() === Scaling{Float64}(1.0)
+        @test Scaling(Float64) === Scaling{Float64}(1.0)
+        @test Scaling(Float32).val === 1.0f0
 
+        # V <: eltype(T) constraint.
+        @test_throws ArgumentError Scaling{Float64}(1)        # Int ⊄ Float64
+        @test_throws ArgumentError Scaling{Float32}(1.0)      # Float64 ⊄ Float32
+
+        # Null: type and value ctors.
         @test eltype(Null{Float64}()) === Float64
-        @test eltype(Unity{Int}()) === Int
+        @test Null(Float64) === Null{Float64}()
+        @test Null(3.14) === Null{Float64}()
+        @test Null(7) === Null{Int}()
 
         # T must be concrete.
         @test_throws ArgumentError Symbolic{:s, Real}()
-        @test_throws ArgumentError Const{Number}(1)
+        @test_throws ArgumentError Scaling{Number}(1)
         @test_throws ArgumentError Null{Integer}()
-        @test_throws ArgumentError Unity{Number}()
     end
 
-    @testset "@symbolic / @const macros" begin
+    @testset "@symbolic macro" begin
         @symbolic τ
         @symbolic dt Float32
-        @const α 1
-        @const β 2.5
         @test τ === Symbolic{:τ, Float64}()
         @test dt === Symbolic{:dt, Float32}()
-        @test α === Const(1)
-        @test β === Const(2.5)
     end
 
     @testset "Scalar tree node + operator overloads" begin
-        τ = Symbolic{:τ, Float64}(); α = Const(2)
+        τ = Symbolic{:τ, Float64}(); α = Scaling(2)
         # Binary op among AbstractScalars builds a Scalar node.
         s = τ * α
         @test s isa Scalar{typeof(*)}
         @test eltype(s) === Float64                                          # promotes Float64 ↔ Int
         @test s.args === (τ, α)
-        # Numeric literal canonicalises to Const at the operator boundary.
+        # Numeric literal canonicalises to Scaling at the operator boundary.
         s2 = τ + 3
         @test s2 isa Scalar{typeof(+)}
-        @test s2.args[2] === Const(3)
+        @test s2.args[2] === Scaling(3)
         s3 = 4 - τ
-        @test s3.args[1] === Const(4)
+        @test s3.args[1] === Scaling(4)
         # Unary.
         @test (-τ) isa Scalar{typeof(-)}
         @test sin(τ) isa Scalar{typeof(sin)}
@@ -220,43 +227,31 @@ StencilCore._interlace(::NTuple{M, _DummyTerm}) where {M} = _DummyTerm{SVector{M
         @test_throws ArgumentError Scalar(+, (Symbolic{:s, String}(), Symbolic{:n, Float64}()))
     end
 
-    @testset "AbstractScalar shift-invariance" begin
-        τ = Symbolic{:τ, Float64}(); α = Const(2.0); n = Null{Float64}(); u = Unity{Float64}()
-        @test τ[] === τ
-        @test τ[ê₁] === τ
-        @test α[3ê₁ + ê₂] === α
-        @test n[ê₁] === n
-        @test u[ô] === u
-        # Scalar tree node is also a scalar; it is shift-invariant via the
-        # AbstractScalar method.
-        s = τ * α
-        @test s[ê₁] === s
-    end
-
     @testset "AbstractScalar show" begin
         τ = Symbolic{:τ, Float64}()
         @test repr(τ) == "τ"
-        @test repr(Const(2.0)) == "2.0"
-        @test repr(Const(3)) == "3"
-        @test repr(Null{Float64}()) == "0"            # type-agnostic glyph
-        @test repr(Unity{Float64}()) == "1"
-        @test repr(τ * Const(2.0)) == "(τ * 2.0)"     # infix
+        @test repr(Scaling(2.0)) == "2.0"
+        @test repr(Scaling(3)) == "3"
+        @test repr(Null{Float64}()) == "0"             # type-agnostic glyph
+        @test repr(Scaling{Float64}(1.0)) == "1.0"     # the new "unit Scaling" prints its val
+        @test repr(τ * Scaling(2.0)) == "(τ * 2.0)"    # infix
         @test repr(-τ) == "-τ"
-        @test repr(Scalar(exp, (τ,))) == "exp(τ)"     # call form
+        @test repr(Scalar(exp, (τ,))) == "exp(τ)"      # call form
     end
 
     @testset "AbstractScalar simplify" begin
         τ = Symbolic{:τ, Float64}()
-        N = Null{Float64}(); U = Unity{Float64}()
+        N = Null{Float64}()
+        U = Scaling{Float64}(1.0)              # the new multiplicative identity (by value)
         simp = StencilCore.simplify
 
         # Leaves are already normal form.
         @test simp(τ) === τ
-        @test simp(Const(2.0)) === Const(2.0)
+        @test simp(Scaling(2.0)) === Scaling(2.0)
         @test simp(N) === N
         @test simp(U) === U
 
-        # Identity / annihilator on Null/Unity (by type, not value).
+        # Identity / annihilator: Null by type, Scaling(1) by value.
         @test simp(N + τ) === τ
         @test simp(τ + N) === τ
         @test simp(N - τ) === Scalar(-, (τ,))          # 0 - b = -b
@@ -269,15 +264,15 @@ StencilCore._interlace(::NTuple{M, _DummyTerm}) where {M} = _DummyTerm{SVector{M
         @test simp(N / τ) === N
         @test simp(-(-τ)) === τ                         # double negation
 
-        # Const folding — produces Const, NOT Null/Unity (strict, no auto-fold).
-        @test simp(Const(2.0) + Const(3.0)) === Const(5.0)
-        @test simp(Const(2.0) * Const(0.0)) === Const(0.0)
-        @test !(simp(Const(2.0) * Const(0.0)) isa Null)
-        @test simp(Const(6.0) / Const(2.0)) === Const(3.0)
-        @test simp(Const(2)^Const(3)) === Const(8)
+        # Fold rule: all-Scaling args fold to a Scaling carrying the result value.
+        @test simp(Scaling(2.0) + Scaling(3.0)) === Scaling(5.0)
+        @test simp(Scaling(2.0) * Scaling(0.0)) === Scaling(0.0)
+        @test !(simp(Scaling(2.0) * Scaling(0.0)) isa Null)
+        @test simp(Scaling(6.0) / Scaling(2.0)) === Scaling(3.0)
+        @test simp(Scaling(2)^Scaling(3)) === Scaling(8)
 
         # Mixed: identity collapses, then fold collapses.
-        @test simp((τ + N) * (Const(2.0) + Const(3.0))) == τ * Const(5.0)
+        @test simp((τ + N) * (Scaling(2.0) + Scaling(3.0))) == τ * Scaling(5.0)
     end
 
     @testset "AbstractScalar materialize" begin
@@ -285,37 +280,39 @@ StencilCore._interlace(::NTuple{M, _DummyTerm}) where {M} = _DummyTerm{SVector{M
         mat = StencilCore.materialize
 
         # Leaves.
-        @test mat(Const(2.5)) === 2.5
+        @test mat(Scaling(2.5)) === 2.5                 # V=T=Float64: 2.5 * one(Float64)
+        @test mat(Scaling(3)) === 3                     # V=T=Int:     3   * one(Int)
+        @test mat(Scaling(Float64)) === 1.0             # val=one(T)
         @test mat(τ, (τ = 7.0,)) === 7.0
         @test mat(Null{Float64}()) === 0.0
-        @test mat(Unity{Int}()) === 1
+        @test mat(Scaling{Float64}(1.0)) === 1.0
+
         # Scalar tree.
-        @test mat(τ * Const(3.0), (τ = 4.0,)) === 12.0
-        @test mat(τ + Const(1.0), (τ = 2.0,)) === 3.0
+        @test mat(τ * Scaling(3.0), (τ = 4.0,)) === 12.0
+        @test mat(τ + Scaling(1.0), (τ = 2.0,)) === 3.0
         @test mat(τ * τ + τ, (τ = 5.0,)) === 30.0
         # _scalar_body_expr round-trips a representative tree.
-        e = StencilCore._scalar_body_expr(τ * Const(3.0))
+        e = StencilCore._scalar_body_expr(τ * Scaling(3.0))
         @test e isa Expr
-        # Evaluate the Expr by binding args.
         let args = (τ = 4.0,)
             @test Core.eval(@__MODULE__, :(let args = $(args); $e end)) === 12.0
         end
     end
 
     @testset "AbstractScalar differentiate" begin
-        τ = Symbolic{:τ, Float64}(); α = Const(2.0)
+        τ = Symbolic{:τ, Float64}(); α = Scaling(2.0)
         η = Symbolic{:η, Float64}()
         diff = StencilCore.differentiate
+        U = Scaling{Float64}(1.0)
 
         # Leaves.
-        @test diff(τ, τ) === Unity{Float64}()
-        @test diff(Const(2.0), τ) === Null{Float64}()
+        @test diff(τ, τ) === U
+        @test diff(Scaling(2.0), τ) === Null{Float64}()
         @test diff(η, τ) === Null{Float64}()
         @test diff(Null{Float64}(), τ) === Null{Float64}()
-        @test diff(Unity{Float64}(), τ) === Null{Float64}()
 
         # Sum rule: ∂(τ + α)/∂τ = 1.
-        @test diff(τ + α, τ) === Unity{Float64}()
+        @test diff(τ + α, τ) === U
         # Product rule: ∂(α * τ)/∂τ = α.
         @test diff(α * τ, τ) === α
         @test diff(τ * α, τ) === α
@@ -330,19 +327,23 @@ StencilCore._interlace(::NTuple{M, _DummyTerm}) where {M} = _DummyTerm{SVector{M
         # No dependence ⇒ Null with the right eltype.
         @test diff(α + η, τ) === Null{Float64}()
 
+        # Mixed-eltype: promote across both operands.
+        @test diff(Scaling(2), τ) === Null{Float64}()           # V=Int promoted with Float64
+        @test diff(Null{Int}(), τ) === Null{Float64}()
+
         # No rule for an arbitrary primitive ⇒ throws when the chain rule fires.
         @test_throws ArgumentError diff(Scalar(tan, (τ,)), τ)
     end
 
     @testset "AbstractScalar AbstractTrees plumbing" begin
         τ = Symbolic{:τ, Float64}()
-        @test AbstractTrees.nodevalue(τ) === :τ
+        @test AbstractTrees.nodevalue(τ) === (:τ, Float64)
         @test AbstractTrees.children(τ) === ()
-        @test AbstractTrees.nodevalue(Const(2.5)) === 2.5
-        @test AbstractTrees.children(Const(2.5)) === ()
+        @test AbstractTrees.nodevalue(Scaling(2.5)) === 2.5
+        @test AbstractTrees.children(Scaling(2.5)) === ()
         @test AbstractTrees.nodevalue(Null{Float64}()) === 0.0
-        @test AbstractTrees.nodevalue(Unity{Int}()) === 1
-        s = τ * Const(2.0)
+        @test AbstractTrees.nodevalue(Scaling{Int}(1)) === 1
+        s = τ * Scaling(2.0)
         @test AbstractTrees.nodevalue(s) === *
         @test AbstractTrees.children(s) === s.args
     end

@@ -5,8 +5,8 @@
 
 # --- Default rules ---------------------------------------------------------
 
-# 1. Identity / annihilator — by dispatch on the Null/Unity *types* (never an
-#    iszero/isone probe on a `Const`, just like the term-side Zero/One rule).
+# 1. Identity / annihilator. `Null` is matched by *type* (structural zero);
+#    multiplicative identity is matched on `Scaling` by *value* (`isone(.val)`).
 rule_identity_scalar(::AbstractScalar) = nothing
 function rule_identity_scalar(s::Scalar)
     f, a = s.fn, s.args
@@ -18,10 +18,10 @@ function rule_identity_scalar(s::Scalar)
         a[1] isa Null && return Scalar(-, (a[2],))            # 0 - b = -b
     elseif f === (*) && length(a) == 2
         (a[1] isa Null || a[2] isa Null) && return Null{eltype(s)}()
-        a[1] isa Unity && return a[2]
-        a[2] isa Unity && return a[1]
+        (a[1] isa Scaling && isone(a[1].val)) && return a[2]
+        (a[2] isa Scaling && isone(a[2].val)) && return a[1]
     elseif f === (/) && length(a) == 2
-        a[2] isa Unity && return a[1]
+        (a[2] isa Scaling && isone(a[2].val)) && return a[1]
         a[1] isa Null  && return Null{eltype(s)}()
     elseif f === (-) && length(a) == 1                         # double negation
         inner = a[1]
@@ -31,13 +31,15 @@ function rule_identity_scalar(s::Scalar)
     return nothing
 end
 
-# 2. Constant folding over an allow-listed pure operator. Produces a `Const`
-#    (never a `Null`/`Unity` — the pre-simplified-input assumption).
+# 2. Constant folding over an allow-listed pure operator. Produces a `Scaling`
+#    constructed from the folded value (Scaling is the literal leaf in this
+#    algebra; the pre-simplified-input assumption means we never need to
+#    canonicalise to `Null` here).
 const _SCALAR_FOLDABLE = (+, -, *, /, \, ^, min, max)
 rule_fold_scalar(::AbstractScalar) = nothing
 function rule_fold_scalar(s::Scalar)
-    (all(a -> a isa Const, s.args) && any(==(s.fn), _SCALAR_FOLDABLE)) || return nothing
-    Const(s.fn(map(a -> a.val, s.args)...))
+    (all(a -> a isa Scaling, s.args) && any(==(s.fn), _SCALAR_FOLDABLE)) || return nothing
+    Scaling(s.fn(map(a -> a.val, s.args)...))
 end
 
 const SCALAR_DEFAULT_RULES = (
@@ -71,11 +73,9 @@ _scalar_rewrite(s::AbstractScalar, rules) =
     simplify(s::AbstractScalar, rules = SCALAR_DEFAULT_RULES; maxsteps = 64)
 
 Rewrite a scalar tree to a normal form by post-walking and applying `rules` to
-a fixed point. The default rules apply additive/multiplicative identities on
-`Null`/`Unity` and fold all-`Const` arguments. As on the term side,
-`Const(0)`/`Const(1)` values are **not** auto-recognised as identities — the
-user is assumed to supply reasonably simplified expressions. The scalar-side
-analogue of [`StencilCalculus.simplify`](@ref).
+a fixed point. The default rules apply additive/multiplicative identities
+(`Null` by type, `Scaling(1)` by value) and fold all-`Scaling` arguments. The
+scalar-side analogue of [`StencilCalculus.simplify`](@ref).
 """
 function simplify(s::AbstractScalar, rules = SCALAR_DEFAULT_RULES; maxsteps::Int = 64)
     for _ in 1:maxsteps
