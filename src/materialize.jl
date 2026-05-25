@@ -16,7 +16,9 @@ to a single value of type `eltype(s)`. The scalar-side analogue of
 """
 materialize(::Symbolic{S}, pairs::NamedTuple) where {S}             = pairs[S]
 materialize(::Null{T}, ::NamedTuple = (;)) where {T}                = zero(T)
-materialize(s::Scaling{V, T}, ::NamedTuple = (;)) where {V, T}      = s.val * one(T)
+materialize(::Unity{T}, ::NamedTuple = (;)) where {T}               = one(T)
+materialize(c::Constant, ::NamedTuple = (;))                        = c.val
+materialize(s::Scaling{T, V}, ::NamedTuple = (;)) where {T, V}      = s.val * one(T)
 materialize(s::Scalar, pairs::NamedTuple = (;))                     =
     s.fn(map(a -> materialize(a, pairs), s.args)...)
 
@@ -30,6 +32,8 @@ the term side. Returns an `Expr` suitable for embedding in a larger AST.
 """
 _scalar_body_expr(::Symbolic{S}) where {S}       = Expr(:., :args, QuoteNode(S))
 _scalar_body_expr(::Null{T}) where {T}           = Expr(:call, :zero, T)
-_scalar_body_expr(s::Scaling{V, T}) where {V, T} = Expr(:call, :*, s.val, Expr(:call, :one, T))
+_scalar_body_expr(::Unity{T}) where {T}          = Expr(:call, :one, T)
+_scalar_body_expr(c::Constant)                   = c.val
+_scalar_body_expr(s::Scaling{T, V}) where {T, V} = Expr(:call, :*, s.val, Expr(:call, :one, T))
 _scalar_body_expr(s::Scalar) =
     Expr(:call, nameof(s.fn), (_scalar_body_expr(a) for a in s.args)...)

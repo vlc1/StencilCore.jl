@@ -1,7 +1,7 @@
 module StencilCore
 
 using AbstractTrees
-using StaticArrays: SUnitRange, SVector
+using StaticArrays: SUnitRange, SVector, SMatrix, StaticArray, similar_type
 
 include("access.jl")
 include("term.jl")
@@ -21,7 +21,7 @@ export AccessStyle, ColumnAccess, RowAccess, AbstractStencil
 export AbstractTerm, ArrayOrTermLike
 
 # Scalar algebra: abstract supertype + concrete leaves and tree node.
-export AbstractScalar, Symbolic, Scaling, Λ, Null, Scalar
+export AbstractScalar, Symbolic, Constant, Scaling, Λ, Null, Unity, Scalar
 export @symbolic
 
 # CAS operations whose generic Calculus extends with AbstractTerm methods.

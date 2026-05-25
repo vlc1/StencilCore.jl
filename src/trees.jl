@@ -6,11 +6,17 @@
 AbstractTrees.nodevalue(::Symbolic{S, T}) where {S, T} = (S, T)
 AbstractTrees.children(::Symbolic)                     = ()
 
+AbstractTrees.nodevalue(s::Constant) = s.val
+AbstractTrees.children(::Constant)   = ()
+
 AbstractTrees.nodevalue(s::Scaling) = s.val
 AbstractTrees.children(::Scaling)   = ()
 
 AbstractTrees.nodevalue(::Null{T}) where {T} = zero(T)
 AbstractTrees.children(::Null)               = ()
+
+AbstractTrees.nodevalue(::Unity{T}) where {T} = one(T)
+AbstractTrees.children(::Unity)               = ()
 
 AbstractTrees.nodevalue(s::Scalar) = s.fn
 AbstractTrees.children(s::Scalar)  = s.args

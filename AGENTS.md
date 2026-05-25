@@ -89,26 +89,100 @@ design lives in [`docs/cas.md`](../StencilCalculus/docs/cas.md).
     ascending). The adjoint `Aᵀ` (which would negate offsets) is a separate
     explicit operation.
 
+12. **Scalar algebra — `AbstractScalar{T}`.** Sibling of, *not* subtype of,
+    `AbstractTerm`. A scalar materialises to **one value** of type `T` (no
+    axes). Five concrete leaves plus one interior node:
+
+    - **`Symbolic{S, T}`** — named substitution leaf; `S` is a `Symbol`,
+      `T` the materialised eltype.
+    - **`Constant{T}`** — literal value carrier; `val::T` stored as-is and
+      materialised to `val`. `T` is any concrete type (including non-`Number`
+      like `SVector` — this is the carrier numeric literals canonicalise to
+      at the operator boundary).
+    - **`Scaling{T, V <: Number}`** — `val::V` stored, materialises to
+      `val * one(T)`. `T` is the *materialised container type*; the one-curly
+      inner ctor `Scaling{Traw}(val)` canonicalises `Traw` and promotes
+      eltype-vs-`V` (`Scaling{Float32}(1.0)` lands at `T = Float64`). Value-
+      space outer ctors `Scaling(T)` / `Scaling(T, val)` route `T` through
+      `_unity_space` so `Scaling(SVector{N, F})` lands in the square Jacobian
+      space `SMatrix{N, N, F}`.
+    - **`Null{T}`** — structural additive zero, dispatch-matched.
+    - **`Unity{T}`** — structural multiplicative one, dispatch-matched.
+      Construction requires `one(T)` defined (`Number`, square `SMatrix`,
+      …). Outer ctor `Unity(T)` routes through `_unity_space` so
+      `Unity(SVector{N, F}) === Unity{SMatrix{N, N, F}}()`.
+    - **`Scalar{F, A<:Tuple{Vararg{AbstractScalar}}, T}`** — interior node
+      `fn(args…)`; `T = Base.promote_op(fn, eltype.(args)…)` computed at
+      construction (a `Union{}` result throws).
+
+    All concrete `T`s are enforced via `_assert_concrete`. `Λ` is an alias
+    of `Scaling`. The `@symbolic name [T]` macro binds `name = Symbolic{:name, T}()`
+    (default `T = Float64`).
+
+13. **Operator boundary canonicalises to `Constant`.** Every binary op
+    `(::AbstractScalar, x)` with `x` not an `AbstractScalar` lifts as
+    `Scalar(op, (·, Constant(x)))` (and symmetrically for the left slot).
+    `asscalar(x) = Constant(x)` for non-scalars; `Base.convert(::Type{<:AbstractScalar}, x) = Constant(x)`.
+    The isotropic `Scaling(val::Number)` form is **not** provided — a numeric
+    literal is data, not a coefficient of `one(·)`.
+
+14. **`simplify` is purely structural.** Identity / annihilator rules
+    match by *type* — `Null` (additive zero), `Unity` (multiplicative one,
+    with an eltype-preservation gate so `Unity{SMatrix} * Constant{Int}` does
+    not silently change eltype) — never by `.val`. Numerical zeros / ones
+    sitting in `Constant.val` or `Scaling.val` are *not* collapsed to
+    `Null` / `Unity`; that step waits for a future static-value encoding
+    (`StaticFloat64`, `StaticInt`).
+
+    Folding has two paths: **coefficient fold** combines Number coefficients
+    from any of `Constant{<:Number}`, `Scaling`, `Unity` (coef `1`), `Null`
+    (coef `0`) — emit `Constant{eltype(s)}` (Number parent) or
+    `Scaling{eltype(s)}` (non-Number parent); **direct fold** applies the
+    operator to `.val`s of all-`Constant` args. Folding combines values; it
+    does not inspect them to decide.
+
+15. **`differentiate` (scalar-side).** Top-level `differentiate(s, v)`
+    requires `eltype(s)` and `eltype(v)` to share *shape-class* — Number or
+    matching-`N` `SVector{N}` — else `ArgumentError`. The result's eltype is
+    the **Jacobian** `J = _jacobian_type(eltype(s), eltype(v))`:
+    `promote_type` for Number/Number, square `SMatrix{N, N, promote_type(F1,
+    F2)}` for `SVector{N, F1}` / `SVector{N, F2}`. `J` is threaded through
+    `_sdiff` so every `Null` and self-leaf `Unity` is typed by it. Product-
+    rule composition is position-aware on `*` (Q3-A): for `i = 1`, contrib
+    is `Scalar(*, (sub, dfn))` — left-multiplication, correct under non-
+    commuting `*`. The derivative table is otherwise mechanical.
+
 ## Public surface
 
 Exports: `AccessStyle`, `ColumnAccess`, `RowAccess`, `AbstractStencil`,
 `AbstractTerm`, `ArrayOrTermLike`, `StaticPair`, `SPair`, `StaticShift`,
 `SShift`, `dim`, `offset`, `ô`, `ê₁ … ê₉`, `LinearStencil`, `StarStencil`,
-`Stencil`, `as_linear`, `as_star`.
+`Stencil`, `as_linear`, `as_star`,
+`AbstractScalar`, `Symbolic`, `Constant`, `Scaling`, `Λ`, `Null`, `Unity`,
+`Scalar`, `@symbolic`, `simplify`, `materialize`, `differentiate`,
+`derivative`.
 
 Files: `access.jl` (trait + supertype), `term.jl` (`AbstractTerm` +
-`ArrayOrTermLike`), `staticshift.jl` (`StaticPair` / `StaticShift` + algebra
-+ `show`), `stencils.jl` (`LinearStencil` / `StarStencil`), `general.jl`
+`ArrayOrTermLike` + `_assert_concrete`), `staticshift.jl` (`StaticPair` /
+`StaticShift` + algebra + `show`), `scalars.jl` (`AbstractScalar` family +
+`@symbolic` + operator overloads + `_unity_space`), `trees.jl`
+(`AbstractTrees` plumbing for scalars), `simplify.jl` (`simplify` + identity
++ fold rules), `materialize.jl` (`materialize` + `_scalar_body_expr`),
+`differentiate.jl` (`differentiate` + `derivative` table + `_jacobian_type`
++ `_unity`), `structured.jl` (`LinearStencil` / `StarStencil`), `general.jl`
 (`Stencil` + narrowing).
 
 Tests: `julia --project=. -e 'using Pkg; Pkg.test()'`.
 
 ## Scope
 
-Implemented: the type vocabulary above + `as_linear` / `as_star` narrowing.
-**No assembly** — CSC `assemble` / `update!` / `build` live in
-`StencilAssembly` and dispatch on a concrete-array coefficient with
-`S = ColumnAccess`.
+Implemented: the type vocabulary above + `as_linear` / `as_star` narrowing
++ the scalar CAS (`simplify`, `materialize`, `differentiate`). **No
+assembly** — CSC `assemble` / `update!` / `build` live in `StencilAssembly`
+and dispatch on a concrete-array coefficient with `S = ColumnAccess`.
 
 Deferred: `PlanarStencil` + `as_planar`; a direct CSC kernel for the general
-`Stencil` (narrowing-only for now); CSR (`RowAccess`) assembly.
+`Stencil` (narrowing-only for now); CSR (`RowAccess`) assembly; non-square
+SArray Jacobians (cross-shape `differentiate`); true SVector×SVector /
+SMatrix×SMatrix chain rules in the scalar tree; static-value encoding for
+`Constant` / `Scaling.val` (would re-enable value-based identity rules).

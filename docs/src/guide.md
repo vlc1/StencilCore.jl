@@ -28,20 +28,28 @@ axis — so the representation is canonical.
 
 A scalar — a timestep, a Reynolds number, a literal `2.0` — has no spatial
 extent. StencilCore models it directly with [`AbstractScalar{T}`](@ref) and a
-small CAS that mirrors the term-side one. Five concrete types:
+small CAS that mirrors the term-side one. Six concrete types:
 
 - [`Symbolic{S,T}`](@ref) — a named substitution leaf, like a `Slot` but with
   one materialized value instead of an array.
-- [`Const{T}`](@ref) — a literal leaf carrying its `val::T`.
+- [`Constant{T}`](@ref) — a literal leaf carrying its `val::T`. `T` is any
+  concrete type — `Number`, `SVector`, anything. This is what numeric (and
+  non-Number) literals canonicalise to at the operator boundary.
+- [`Scaling{T,V<:Number}`](@ref) — a numerical coefficient times the
+  multiplicative identity of shape `T`: materialises to `val * one(T)`. Compact
+  carrier for "a scalar multiple of `I`", produced by the chain rule when
+  differentiating vector-valued expressions.
 - [`Scalar{F,A,T}`](@ref) — an interior tree node `fn(args…)`.
 - [`Null{T}`](@ref) / [`Unity{T}`](@ref) — type-level structural `0` / `1`.
+  `Unity` requires `one(T)` defined (`Number`, square `SMatrix`); its outer
+  ctor routes an SVector through to its square Jacobian space.
 
 The operator overloads build `Scalar` trees, with numeric literals
-canonicalising to `Const`:
+canonicalising to `Constant`:
 
 ```julia
 @symbolic τ Float64
-@const α 2.0
+α = Constant(2.0)
 
 τ * α + α              # Scalar(+, (Scalar(*, (τ, α)), α))
 typeof(τ * α + α)      # Scalar{typeof(+), …, Float64}
@@ -49,30 +57,39 @@ eltype(τ * α + α)      # Float64
 ```
 
 [`simplify`](@ref) post-walks a scalar tree with the same rule-rewriter shape
-as the term side. Identities (`Null + x → x`, `x * Unity → x`, `x * Null →
-Null`) are **type-dispatched**; constant folding is value-based on all-`Const`
-arguments:
+as the term side. Identities are **purely structural** — `Null + x → x`,
+`x * Unity → x` (with an eltype-preservation gate), `x * Null → Null` — never
+inspecting `.val`. Folding combines values; it does not match on them.
 
 ```julia
-simplify(Null{Float64}() + τ)            # τ
-simplify(τ * Unity{Float64}())           # τ
-simplify(Const(2.0) + Const(3.0))        # Const(5.0)
+simplify(Null{Float64}() + τ)              # τ
+simplify(τ * Unity{Float64}())             # τ
+simplify(Constant(2.0) + Constant(3.0))    # Constant(5.0)
+simplify(τ * Constant(1.0))                # stays a Scalar — numerical `1`
+                                           # is not a structural identity
 ```
 
-[`differentiate`](@ref) on a scalar tree returns an `AbstractScalar`. With no
-spatial offsets there is no `Stencil` — just the chain rule:
+[`differentiate`](@ref) on a scalar tree returns an `AbstractScalar` whose
+eltype is the **Jacobian** of `eltype(s)` w.r.t. `eltype(v)`. For Number
+variables the Jacobian is a Number; for `SVector{N}` variables it is the
+square `SMatrix{N, N}`. Mixed shape-classes are rejected at the top level.
 
 ```julia
 @symbolic τ Float64
-differentiate(sin(τ) * τ, τ)             # cos(τ)*τ + sin(τ)*1 simplified
-differentiate(Const(2.0), τ)             # Null{Float64}() — no dependence
+differentiate(sin(τ) * τ, τ)               # cos(τ)*τ + sin(τ)*1 simplified
+differentiate(Constant(2.0), τ)            # Null{Float64}() — no dependence
+
+# Vector-valued: ∂(2x)/∂x = 2I as a Scaling-carried SMatrix.
+@symbolic x SVector{2, Float64}
+differentiate(2x, x)                       # Scaling{SMatrix{2,2,Float64,4}}(2)
 ```
 
 [`materialize`](@ref) reduces a scalar tree to a single value, substituting
 `Symbolic` leaves from a `NamedTuple`:
 
 ```julia
-materialize(τ * Const(3.0), (τ = 4.0,))  # 12.0
+materialize(τ * Constant(3.0), (τ = 4.0,))  # 12.0
+materialize(Unity{SMatrix{2,2,Float64,4}}())  # the 2×2 identity matrix
 ```
 
 These scalars become **term coefficients** once StencilCalculus wraps them in

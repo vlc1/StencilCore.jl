@@ -10,8 +10,9 @@ owns the types and a small scalar CAS; it depends only on
 StencilCore              stencil types: AccessStyle, AbstractStencil, AbstractTerm{T},
   │                                     ArrayOrTermLike, StaticShift, LinearStencil,
   │                                     StarStencil, Stencil, as_linear / as_star
-  │                      scalar CAS:    AbstractScalar{T}, Symbolic, Const, Scalar,
-  │                                     Null, Unity, simplify, materialize, differentiate
+  │                      scalar CAS:    AbstractScalar{T}, Symbolic, Constant,
+  │                                     Scaling, Scalar, Null, Unity,
+  │                                     simplify, materialize, differentiate
   ├── StencilAssembly      CSC assembly  (build / assemble / update!)
   └── StencilCalculus      term-level CAS (simplify, differentiate, materialize) + bridge
 ```
@@ -54,10 +55,11 @@ mirror each other:
 | role                      | `AbstractScalar` (Core)                                  | `AbstractTerm` (StencilCalculus)                       |
 |---------------------------|----------------------------------------------------------|--------------------------------------------------------|
 | named substitution leaf   | [`Symbolic`](@ref)`{S, T}`                               | `Slot{S, T}`                                           |
-| literal carrier           | [`Const`](@ref)`{T}` with `val::T`                       | — (literals enter terms via `Fill(Const(…))`)          |
+| literal carrier           | [`Constant`](@ref)`{T}` with `val::T`                    | — (literals enter terms via `Fill(Constant(…))`)       |
+| scaled identity           | [`Scaling`](@ref)`{T, V<:Number}` (`val * one(T)`)       | —                                                      |
 | interior tree node        | [`Scalar`](@ref)`{F, A<:Tuple{Vararg{AbstractScalar}}}`  | `Term{F, A<:Tuple{Vararg{AbstractTerm}}}`              |
-| additive identity         | [`Null`](@ref)`{T}`                                      | `Zero{T}`                                              |
-| multiplicative identity   | [`Unity`](@ref)`{T}`                                     | `One{T}`                                               |
+| additive identity         | [`Null`](@ref)`{T}` (structural)                         | `Zero{T}`                                              |
+| multiplicative identity   | [`Unity`](@ref)`{T}` (structural; requires `one(T)`)     | `One{T}`                                               |
 | broadcast bridge          | —                                                        | `Fill{T}` (lives in StencilCalculus, wraps an `AbstractScalar` *or* a literal)|
 
 An [`AbstractTerm{T}`](@ref) is *array-like* — a dimension-/size-less
@@ -78,11 +80,13 @@ so `Term.args` stays `Tuple{Vararg{AbstractTerm}}`.
   *assemblable* with a concrete-array coefficient and *symbolic* with a term
   coefficient.
 - **[`AbstractScalar`](@ref)`{T}`** — the cell-level scalar algebra. Concrete
-  subtypes ([`Symbolic`](@ref), [`Const`](@ref), [`Scalar`](@ref),
-  [`Null`](@ref), [`Unity`](@ref)) have their own operator overloads, a
-  [`simplify`](@ref) rewriter, a [`materialize`](@ref) reduction, and a
-  [`differentiate`](@ref) chain rule — all parallel to the term side, all
-  living entirely in scalar-land.
+  leaves ([`Symbolic`](@ref), [`Constant`](@ref), [`Scaling`](@ref),
+  [`Null`](@ref), [`Unity`](@ref)) plus the interior [`Scalar`](@ref) node
+  have their own operator overloads, a *structural* [`simplify`](@ref)
+  rewriter (identities by dispatch on `Null`/`Unity`; folding combines values
+  but does not match on them), a [`materialize`](@ref) reduction, and a
+  Jacobian-aware [`differentiate`](@ref) chain rule — all parallel to the
+  term side, all living entirely in scalar-land.
 - **[`StaticPair`](@ref)`{D,O}` / [`StaticShift`](@ref)** — type-level lattice
   offsets with a `+`/`-`/`*` algebra, the zero shift [`ô`](@ref), and basis
   shifts `ê₁ … ê₉`. They read like lattice vectors:
@@ -108,8 +112,9 @@ st = LinearStencil{1}(SUnitRange(0, 1), fill(SVector(-1.0, 1.0), 5))
 
 # The scalar CAS, on its own:
 @symbolic τ Float64
-@const α 2
-differentiate(τ * α + α, τ)        # === Unity{Float64}(); broadcasts to `1` per cell once wrapped in Fill
+α = Constant(2)
+differentiate(τ * α + α, τ)        # === Constant{Float64}(2.0)
+                                   # eltype promotes via Scalar(*); broadcasts to `2.0` per cell once wrapped in Fill
 ```
 
 See the [Guide](@ref) for worked examples and the [API reference](@ref) for the

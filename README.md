@@ -9,11 +9,14 @@ them. StencilCore owns the types; it has no assembly and depends only on
 [StaticArrays.jl](https://github.com/JuliaArrays/StaticArrays.jl).
 
 ```
-StencilCore              types: AccessStyle, AbstractStencil, AbstractTerm{T},
-  │                             ArrayOrTermLike, StaticShift, LinearStencil,
-  │                             StarStencil, Stencil, as_linear / as_star
+StencilCore         stencil types: AccessStyle, AbstractStencil, AbstractTerm{T},
+  │                                ArrayOrTermLike, StaticShift, LinearStencil,
+  │                                StarStencil, Stencil, as_linear / as_star
+  │                  scalar CAS:   AbstractScalar{T}, Symbolic, Constant, Scaling,
+  │                                Null, Unity, Scalar, @symbolic,
+  │                                simplify, materialize, differentiate
   ├── StencilAssembly      CSC assembly  (build / assemble / update!)
-  └── StencilCalculus      symbolic CAS  (simplify, differentiate, materialize)
+  └── StencilCalculus      term-level CAS (simplify, differentiate, materialize) + bridge
 ```
 
 ## What it provides
@@ -30,6 +33,11 @@ StencilCore              types: AccessStyle, AbstractStencil, AbstractTerm{T},
   **`Stencil`** (arbitrary reverse-lex offset list).
 - **`as_linear` / `as_star`** — narrow a general `Stencil` to an assemblable
   type by a shift-pattern match and a verbatim coefficient copy.
+- **`AbstractScalar{T}`** — the cell-level scalar algebra. Concrete leaves
+  `Symbolic`, `Constant`, `Scaling`, `Null`, `Unity` plus the interior
+  `Scalar` node, with operator overloads, a structural `simplify`,
+  `materialize`, and a Jacobian-aware `differentiate` (including the
+  `SVector → SMatrix` self-derivative case).
 
 ## Install
 
@@ -54,6 +62,15 @@ st = LinearStencil{1}(SUnitRange(0, 1), fill(SVector(-1.0, 1.0), 5))
 
 # Type-level offsets read like lattice vectors:
 3ê₁ + ê₂                      # StaticShift{Tuple{StaticPair{1,3}, StaticPair{2,1}}}
+
+# The scalar CAS, on its own:
+@symbolic τ Float64
+differentiate(2τ + τ * τ, τ)                  # 2 + 2τ  (simplified)
+differentiate(Constant(2.0), τ)               # Null{Float64}() — no dependence
+
+# Vector-valued symbols: the Jacobian lands in the matching square SMatrix.
+@symbolic x SVector{2, Float64}
+differentiate(2x, x)                          # Scaling{SMatrix{2,2,Float64,4}}(2)
 ```
 
 See [`AGENTS.md`](AGENTS.md) for the canonical design decisions.
