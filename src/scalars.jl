@@ -143,7 +143,7 @@ for op in (:+, :-, :*, :/, :\, :^, :min, :max)
     @eval Base.$op(a::AbstractScalar, b)                 = Scalar($op, (a, Constant(b)))
     @eval Base.$op(a,                 b::AbstractScalar) = Scalar($op, (Constant(a), b))
 end
-for op in (:-, :+, :exp, :sin, :cos, :tan, :log, :sqrt, :abs)
+for op in (:-, :+, :exp, :sin, :cos, :tan, :log, :sqrt, :abs, :sign)
     @eval Base.$op(a::AbstractScalar) = Scalar($op, (a,))
 end
 

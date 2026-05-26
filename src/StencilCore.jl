@@ -25,7 +25,7 @@ export AbstractScalar, Symbolic, Constant, Null, Unity, Scalar
 export @symbolic
 
 # CAS operations whose generic Calculus extends with AbstractTerm methods.
-export simplify, materialize, differentiate, derivative
+export simplify, materialize, differentiate, derivative, @scalar_rule
 
 # Type-level offsets.
 export StaticPair, SPair, StaticShift, SShift, dim, offset

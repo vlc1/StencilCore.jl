@@ -35,8 +35,13 @@ _left_unity_shape(::Type, ::Type) = false
 _left_unity_shape(::Type{SMatrix{N,N,Tx,L}}, ::Type{SMatrix{N,N,Tf,L}}) where {N,Tx,Tf,L} = true
 _left_unity_shape(::Type{SVector{N,Tx}}, ::Type{SMatrix{N,N,Tf,L}}) where {N,Tx,Tf,L} = true
 
-rule_identity_scalar(::AbstractScalar) = nothing
-function rule_identity_scalar(s::Scalar)
+# 1. Additive identity. Purely *structural*: `Null` is matched by type
+#    (dispatch), never by `.val`. Shape-stability gate: `eltype(s) ===
+#    eltype(arg)` prevents broadcast identities that would change the
+#    expression shape (e.g. `zero(SVector) + scalar` must not collapse to
+#    the scalar — broadcasting gives a vector, not a scalar).
+rule_additive_identity(::AbstractScalar) = nothing
+function rule_additive_identity(s::Scalar)
     f, a = s.fn, s.args
     if f === (+) && length(a) == 2
         (a[1] isa Null && eltype(s) === eltype(a[2])) && return a[2]
@@ -46,7 +51,19 @@ function rule_identity_scalar(s::Scalar)
         # 0 - b = -b, only when unary minus preserves the expression eltype.
         (a[1] isa Null && Base.promote_op(-, eltype(a[2])) === eltype(s)) &&
             return Scalar(-, (a[2],))
-    elseif f === (*) && length(a) == 2
+    end
+    return nothing
+end
+
+# 2. Multiplicative identity / annihilator. `Null` is the annihilator for `*`
+#    and `0/x`; `Unity` is the identity for `*`, `/`, and `x/x`.
+#    `_right_unity_shape` / `_left_unity_shape` additionally allow
+#    cross-precision same-size matrix identities while blocking shape-changing
+#    ones. Returning the narrower stored type is deliberate.
+rule_multiplicative_identity(::AbstractScalar) = nothing
+function rule_multiplicative_identity(s::Scalar)
+    f, a = s.fn, s.args
+    if f === (*) && length(a) == 2
         (a[1] isa Null || a[2] isa Null) && return Null{eltype(s)}()
         if a[1] isa Unity
             a[2] isa Unity && return Unity{eltype(s)}()        # I * I = I
@@ -63,11 +80,17 @@ function rule_identity_scalar(s::Scalar)
                 return a[1]
         end
         a[1] isa Null && return Null{eltype(s)}()
-    elseif f === (-) && length(a) == 1                         # double negation
-        inner = a[1]
-        inner isa Scalar && inner.fn === (-) && length(inner.args) == 1 &&
-            return inner.args[1]
     end
+    return nothing
+end
+
+# 3. Double negation: -(-x) → x.
+rule_double_negation(::AbstractScalar) = nothing
+function rule_double_negation(s::Scalar)
+    s.fn === (-) && length(s.args) == 1 || return nothing
+    inner = s.args[1]
+    inner isa Scalar && inner.fn === (-) && length(inner.args) == 1 &&
+        return inner.args[1]
     return nothing
 end
 
@@ -94,28 +117,69 @@ _coef(::Unity)                            = true
 _coef(::Null)                             = false
 _coef(::AbstractScalar)                   = nothing
 
-const _SCALAR_FOLDABLE = (+, -, *, /, \, ^, min, max)
-rule_fold_scalar(::AbstractScalar) = nothing
-function rule_fold_scalar(s::Scalar)
-    any(==(s.fn), _SCALAR_FOLDABLE) || return nothing
+const _SCALAR_FOLDABLE = Set{Any}((+, -, *, /, \, ^, min, max))
 
+# 2a. Coefficient fold (Path 1): every arg is Number-coefficient-decomposable
+#     via `_coef`. Restricted to Number-eltype results: emits
+#     `Constant{eltype(s)}(folded)`. Non-Number eltypes (e.g. SMatrix Jacobians)
+#     are not folded here — those trees remain as `Scalar` nodes until
+#     `materialize` evaluates them.
+rule_coefficient_fold(::AbstractScalar) = nothing
+function rule_coefficient_fold(s::Scalar)
+    s.fn in _SCALAR_FOLDABLE || return nothing
+    eltype(s) <: Number       || return nothing
     coefs = map(_coef, s.args)
-    if all(c -> c !== nothing, coefs)
-        eltype(s) <: Number || return nothing
-        folded = s.fn(coefs...)
-        return Constant{eltype(s)}(folded)
-    end
-
-    if all(a -> a isa Constant, s.args)
-        return Constant{eltype(s)}(s.fn(map(a -> a.val, s.args)...))
-    end
-
-    nothing
+    all(c -> c !== nothing, coefs) || return nothing
+    Constant{eltype(s)}(s.fn(coefs...))
 end
 
+# 2b. Constant fold (Path 2): all args are `Constant` — apply `s.fn` to the
+#     `.val`s directly and emit `Constant{eltype(s)}`. Handles non-Number values
+#     such as `Constant(SVector(1,0)) + Constant(SVector(0,1))`.
+rule_constant_fold(::AbstractScalar) = nothing
+function rule_constant_fold(s::Scalar)
+    s.fn in _SCALAR_FOLDABLE               || return nothing
+    all(a -> a isa Constant, s.args)        || return nothing
+    Constant{eltype(s)}(s.fn(map(a -> a.val, s.args)...))
+end
+
+"""
+    SCALAR_DEFAULT_RULES
+
+Default simplification rule set used by [`simplify`](@ref). Each element is a
+callable with the signature:
+
+    rule(s::AbstractScalar) -> Union{AbstractScalar, Nothing}
+
+A rule returns a replacement node when applicable, or `nothing` to pass to
+the next rule. Rules are tried **in order**; the first non-`nothing` result
+wins for a given node. The post-walk in `_scalar_rebuild` guarantees that
+children are already in normal form when a rule fires on their parent.
+
+Built-in rules (in application order):
+
+| Rule                          | Action                                 |
+|:------------------------------|:---------------------------------------|
+| `rule_additive_identity`      | `0+x→x`, `x+0→x`, `0-x→-x`, `x-0→x` |
+| `rule_multiplicative_identity`| `0*x→0`, `1*x→x`, `x/1→x`, `0/x→0`   |
+| `rule_double_negation`        | `-(-x) → x`                            |
+| `rule_coefficient_fold`       | Number-valued `Constant`/`Unity`/`Null` args → single `Constant` |
+| `rule_constant_fold`          | All-`Constant` args → direct `Constant` |
+
+To extend, compose a new tuple that includes the new rule(s) and pass it as
+the `rules` keyword argument to `simplify`:
+
+```julia
+my_rules = (my_rule, StencilCore.SCALAR_DEFAULT_RULES...)
+simplify(expr; rules = my_rules)
+```
+"""
 const SCALAR_DEFAULT_RULES = (
-    rule_identity_scalar,
-    rule_fold_scalar,
+    rule_additive_identity,
+    rule_multiplicative_identity,
+    rule_double_negation,
+    rule_coefficient_fold,
+    rule_constant_fold,
 )
 
 # --- Rewriter --------------------------------------------------------------
