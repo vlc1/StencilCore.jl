@@ -56,18 +56,16 @@ derivative(::typeof(cos),  ::Val{1}, x::AbstractScalar) = Scalar(-, (Scalar(sin,
 derivative(::typeof(exp),  ::Val{1}, x::AbstractScalar) = Scalar(exp, (x,))
 derivative(::typeof(log),  ::Val{1}, x::AbstractScalar) = Scalar(/, (_unity(_se((x,))), x))
 derivative(::typeof(sqrt), ::Val{1}, x::AbstractScalar) =
-    Scalar(/, (_unity(_se((x,))), Scalar(*, (Scaling(2), Scalar(sqrt, (x,))))))
+    Scalar(/, (_unity(_se((x,))), Scalar(*, (Constant(2), Scalar(sqrt, (x,))))))
 derivative(f, ::Val, args::Vararg{AbstractScalar}) =
     throw(ArgumentError("no scalar derivative rule for $(f)"))
 
 # --- Leaf rules ------------------------------------------------------------
 
-# A scalar leaf either matches the variable (derivative = unit Scaling in
+# A scalar leaf either matches the variable (derivative = structural Unity in
 # `J`-shape) or it does not (derivative = `Null{J}`). Under Q1=(c), all
 # leaf-level Jacobians collapse to the *outer* Jacobian eltype `J` threaded
-# through the recursion — so cross-shape eltypes (e.g. Number leaf inside an
-# SVector derivative) never need their own Jacobian space.
-_sdiff(::Scaling,  v::Symbolic, J::Type) = Null{J}()
+# through the recursion.
 _sdiff(::Constant, v::Symbolic, J::Type) = Null{J}()
 _sdiff(::Unity,    v::Symbolic, J::Type) = Null{J}()
 _sdiff(::Null,     v::Symbolic, J::Type) = Null{J}()

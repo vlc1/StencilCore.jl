@@ -7,29 +7,62 @@
 
 # 1. Identity / annihilator. Purely *structural*: `Null` and `Unity` are
 #    matched by type (dispatch), never by `.val`. Numerical zeros / ones
-#    sitting in a `Constant` or `Scaling`'s `.val` are not collapsed by this
-#    rule — they belong to a future static-encoding pass (e.g. `StaticInt`).
-#    The eltype-preservation gate on `Unity` guards against shape-changing
-#    multiplications (e.g. `Unity{SMatrix} * Constant{Int}` must stay a
-#    `Scalar` because returning the Int operand would silently drop the
-#    matrix eltype).
+#    sitting in a `Constant`'s `.val` are not collapsed by this rule — they
+#    belong to a future static-encoding pass (e.g. `StaticInt`).
+#
+#    Shape-stability gates on `Null` and `Unity`:
+#    - `Null` additive rules carry `eltype(s) === eltype(arg)` to prevent
+#      shape-changing broadcast identities (e.g. `zero(SVector) + scalar`
+#      should not collapse to the scalar — broadcasting gives a vector).
+#    - `Unity` multiplicative rules use `_right_unity_shape` /
+#      `_left_unity_shape` to additionally allow cross-precision same-size
+#      matrix identities (e.g. `SMatrix{Int} * Unity{SMatrix{Float}} →
+#      SMatrix{Int}`) while blocking shape-changing ones (e.g. `Int *
+#      Unity{SMatrix}` must stay a `Scalar`).
+
+# Shape-compatibility helpers for the Unity identity rules.
+# These cover the *cross-precision* cases that the `eltype(s) === eltype(arg)`
+# gate does not: when `one(J) * v == v` (or `v * one(J) == v`) holds in value
+# but `eltype(s)` is wider than `eltype(v)`.  Returning `v` (narrower type) is
+# deliberate — the convention is to preserve the more-specific stored type.
+
+# `v::T * one(J) == v`: safe when both are square matrices of the same size N.
+_right_unity_shape(::Type, ::Type) = false
+_right_unity_shape(::Type{SMatrix{N,N,Tx,L}}, ::Type{SMatrix{N,N,Tf,L}}) where {N,Tx,Tf,L} = true
+
+# `one(J) * v::T == v`: same-size square matrices, plus identity × column vector.
+_left_unity_shape(::Type, ::Type) = false
+_left_unity_shape(::Type{SMatrix{N,N,Tx,L}}, ::Type{SMatrix{N,N,Tf,L}}) where {N,Tx,Tf,L} = true
+_left_unity_shape(::Type{SVector{N,Tx}}, ::Type{SMatrix{N,N,Tf,L}}) where {N,Tx,Tf,L} = true
 
 rule_identity_scalar(::AbstractScalar) = nothing
 function rule_identity_scalar(s::Scalar)
     f, a = s.fn, s.args
     if f === (+) && length(a) == 2
-        a[1] isa Null && return a[2]
-        a[2] isa Null && return a[1]
+        (a[1] isa Null && eltype(s) === eltype(a[2])) && return a[2]
+        (a[2] isa Null && eltype(s) === eltype(a[1])) && return a[1]
     elseif f === (-) && length(a) == 2
-        a[2] isa Null && return a[1]
-        a[1] isa Null && return Scalar(-, (a[2],))            # 0 - b = -b
+        (a[2] isa Null && eltype(s) === eltype(a[1])) && return a[1]
+        # 0 - b = -b, only when unary minus preserves the expression eltype.
+        (a[1] isa Null && Base.promote_op(-, eltype(a[2])) === eltype(s)) &&
+            return Scalar(-, (a[2],))
     elseif f === (*) && length(a) == 2
         (a[1] isa Null || a[2] isa Null) && return Null{eltype(s)}()
-        (a[1] isa Unity && eltype(s) === eltype(a[2])) && return a[2]
-        (a[2] isa Unity && eltype(s) === eltype(a[1])) && return a[1]
+        if a[1] isa Unity
+            a[2] isa Unity && return Unity{eltype(s)}()        # I * I = I
+            (eltype(s) === eltype(a[2]) || _left_unity_shape(eltype(a[2]), eltype(a[1]))) &&
+                return a[2]
+        elseif a[2] isa Unity
+            (eltype(s) === eltype(a[1]) || _right_unity_shape(eltype(a[1]), eltype(a[2]))) &&
+                return a[1]
+        end
     elseif f === (/) && length(a) == 2
-        (a[2] isa Unity && eltype(s) === eltype(a[1])) && return a[1]
-        a[1] isa Null  && return Null{eltype(s)}()
+        if a[2] isa Unity
+            a[1] isa Unity && return Unity{eltype(s)}()        # I / I = I
+            (eltype(s) === eltype(a[1]) || _right_unity_shape(eltype(a[1]), eltype(a[2]))) &&
+                return a[1]
+        end
+        a[1] isa Null && return Null{eltype(s)}()
     elseif f === (-) && length(a) == 1                         # double negation
         inner = a[1]
         inner isa Scalar && inner.fn === (-) && length(inner.args) == 1 &&
@@ -39,27 +72,24 @@ function rule_identity_scalar(s::Scalar)
 end
 
 # 2. Folding. Two paths.
-#    Path 1 — *coefficient fold*: every arg is shape-decomposable into a Number
-#    coefficient (`_coef`). Apply `s.fn` to the coefficients and emit
-#    `Constant{eltype(s)}` (Number eltype) or `Scaling{eltype(s)}` (non-Number
-#    eltype). Captures the differentiation pipeline result, e.g.
-#    `Constant(2) * Unity{SMatrix}() → Scaling{SMatrix}(2)`.
+#    Path 1 — *coefficient fold*: every arg is Number-coefficient-decomposable
+#    via `_coef`. Restricted to Number-eltype results: emits
+#    `Constant{eltype(s)}(folded)`. Non-Number eltypes (e.g. SMatrix Jacobians)
+#    are not folded here — those trees remain as `Scalar` nodes until
+#    `materialize` evaluates them.
 #    Path 2 — *direct fold*: every arg is a `Constant` (possibly carrying a
 #    non-Number value like `SVector`). Apply `s.fn` to the `.val`s directly
 #    and emit `Constant{eltype(s)}`.
 
-# Number coefficient for shape-decomposable carriers. `nothing` ⇒ not
+# Number coefficient for coefficient-foldable carriers. `nothing` ⇒ not
 # coefficient-foldable (the carrier holds a full non-Number value).
 #
 # Unity / Null contribute the structural multiplicative / additive identity:
 # `Bool(true)` / `Bool(false)`. Bool is the *universal* scalar identity —
 # `x * true === x`, `x + false === x` for any Number `x`, with no type
-# widening. Returning `one(eltype(T))` / `zero(eltype(T))` would force a
-# spurious promotion via `eltype(T)`'s type (e.g. `Int(2) * one(Float64)
-# === 2.0::Float64`), changing the stored `V` for no semantic reason.
+# widening.
 _coef(c::Constant{T}) where {T <: Number} = c.val
 _coef(::Constant)                         = nothing
-_coef(s::Scaling)                         = s.val
 _coef(::Unity)                            = true
 _coef(::Null)                             = false
 _coef(::AbstractScalar)                   = nothing
@@ -71,9 +101,9 @@ function rule_fold_scalar(s::Scalar)
 
     coefs = map(_coef, s.args)
     if all(c -> c !== nothing, coefs)
+        eltype(s) <: Number || return nothing
         folded = s.fn(coefs...)
-        return eltype(s) <: Number ? Constant{eltype(s)}(folded) :
-                                     Scaling{eltype(s)}(folded)
+        return Constant{eltype(s)}(folded)
     end
 
     if all(a -> a isa Constant, s.args)
@@ -83,33 +113,9 @@ function rule_fold_scalar(s::Scalar)
     nothing
 end
 
-# 3. Canonicalise a `Scaling` coefficient inside a `*` / `/` node to its
-#    equivalent `Constant` when doing so preserves the parent's eltype. This
-#    closes the algebraic equivalence
-#
-#        Scaling{S}(c) * y  ≡  Constant(c) * y    when one(S) acts as identity
-#                                                  on `y`'s value space
-#
-#    that neither the structural identity rule (no `Null`/`Unity` in the tree)
-#    nor the value fold rule (a non-foldable sibling like `Symbolic` blocks
-#    Path 1) catches. The eltype-preservation gate keeps the rule conservative:
-#    `Scaling{SMatrix}(c) * Constant{Int}` does NOT collapse — that would
-#    silently demote the matrix coefficient.
-rule_collapse_scaling(::AbstractScalar) = nothing
-function rule_collapse_scaling(s::Scalar)
-    (s.fn === (*) || s.fn === (/)) && length(s.args) == 2 || return nothing
-    a1, a2 = s.args
-    new_a1 = a1 isa Scaling ? Constant(a1.val) : a1
-    new_a2 = a2 isa Scaling ? Constant(a2.val) : a2
-    (new_a1 === a1 && new_a2 === a2) && return nothing
-    Base.promote_op(s.fn, eltype(new_a1), eltype(new_a2)) === eltype(s) || return nothing
-    Scalar(s.fn, (new_a1, new_a2))
-end
-
 const SCALAR_DEFAULT_RULES = (
     rule_identity_scalar,
     rule_fold_scalar,
-    rule_collapse_scaling,
 )
 
 # --- Rewriter --------------------------------------------------------------
@@ -141,8 +147,8 @@ Rewrite a scalar tree to a normal form by post-walking and applying `rules` to
 a fixed point. The default rules are *purely structural*: identities and
 annihilators dispatch on [`Null`](@ref) (additive zero) and [`Unity`](@ref)
 (multiplicative one, with an eltype-preservation gate), never on `.val`.
-Folding combines numerical coefficients across [`Constant`](@ref) /
-[`Scaling`](@ref) / `Unity` / `Null` args (Path 1) or direct values across
+Folding combines numerical coefficients across [`Constant`](@ref) / `Unity` /
+`Null` args (Path 1, Number-eltype results only) or direct values across
 all-`Constant` args (Path 2). The scalar-side analogue of
 [`StencilCalculus.simplify`](@ref).
 """

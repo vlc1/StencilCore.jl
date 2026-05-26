@@ -174,45 +174,6 @@ StencilCore._interlace(::NTuple{M, _DummyTerm}) where {M} = _DummyTerm{SVector{M
         @test Symbolic{:τ}() isa Symbolic{:τ, Float64}                      # default T = Float64
         @test eltype(Symbolic{:τ, Float32}()) === Float32
 
-        # Scaling{V,T}: V<:Number; T = Traw when V<:eltype(Traw), else widens.
-        @test Scaling{Int}(7).val === 7
-        @test Λ === Scaling
-
-        # V wider than eltype(T_raw) ⇒ T promotes (no throw).
-        @test Scaling{Float64}(1)   isa Scaling{Float64, Int}
-        @test Scaling{Float32}(1.0) isa Scaling{Float64, Float64}
-        @test eltype(Scaling{Float32}(1.0)) === Float64
-
-        # SArray shape: Scaling{SMatrix{2,2,Float64}}(2). The raw `T` (missing
-        # the `L=4` parameter) is canonicalised into the fully-resolved
-        # `SMatrix{2,2,Float64,4}`.
-        let T2 = SMatrix{2, 2, Float64, 4}
-            sc = Scaling{SMatrix{2, 2, Float64}}(2)
-            @test sc isa Scaling{T2, Int}
-            @test eltype(sc) === T2
-        end
-
-        # Value-space outer ctors: Scaling(T) and Scaling(T, val). `T` is
-        # routed through `_unity_space` so an SVector lands in its Jacobian
-        # (square SMatrix) space. `val` is stored as-is (V = typeof(val)).
-        @test Scaling(Float64)      === Scaling{Float64, Float64}(1.0)
-        @test Scaling(Float64, 2)   === Scaling{Float64, Int}(2)
-        @test Scaling(Float64, 2.0) === Scaling{Float64, Float64}(2.0)
-        let M3 = SMatrix{3, 3, Float64, 9}
-            @test Scaling(SVector{3, Float64})    === Scaling{M3, Float64}(1.0)
-            @test Scaling(SVector{3, Float64}, 2) === Scaling{M3, Int}(2)
-        end
-
-        # Symbol-anchored ctors delegate to the value-space form.
-        let τT = Symbolic{:τ, Float64}
-            @test Scaling(τT)      === Scaling(Float64)
-            @test Scaling(τT, 2.0) === Scaling(Float64, 2.0)
-        end
-        let xT = Symbolic{:x, SVector{2, Float64}}, M2 = SMatrix{2, 2, Float64, 4}
-            @test Scaling(xT)    === Scaling{M2, Float64}(1.0)
-            @test Scaling(xT, 3) === Scaling{M2, Int}(3)
-        end
-
         # Constant: any concrete T; stores `val` as-is.
         @test Constant(2.0) isa Constant{Float64}
         @test Constant(3).val === 3
@@ -243,7 +204,6 @@ StencilCore._interlace(::NTuple{M, _DummyTerm}) where {M} = _DummyTerm{SVector{M
 
         # T must be concrete.
         @test_throws ArgumentError Symbolic{:s, Real}()
-        @test_throws ArgumentError Scaling{Number}(1)
         @test_throws ArgumentError Null{Integer}()
     end
 
@@ -286,8 +246,12 @@ StencilCore._interlace(::NTuple{M, _DummyTerm}) where {M} = _DummyTerm{SVector{M
         @test repr(Constant(2.0)) == "2.0"
         @test repr(Constant(3)) == "3"
         @test repr(Null{Float64}()) == "0"             # type-agnostic glyph
-        @test repr(Unity{Float64}()) == "1"            # type-agnostic glyph
-        @test repr(Scaling{Float64}(1.0)) == "1.0"     # Scaling prints its stored val
+        @test repr(Unity{Float64}()) == "U"            # type-agnostic glyph
+        let J = SMatrix{2, 2, Float64, 4}
+            @test repr(Constant(2) * Unity{J}()) == "2U"      # numeric juxtaposition
+            @test repr(τ * Unity{J}()) == "τ * U"             # symbolic: explicit *, no parens
+            @test repr(Unity{J}() * τ) == "U * τ"             # Unity on left
+        end
         @test repr(τ * Constant(2.0)) == "(τ * 2.0)"   # infix
         @test repr(-τ) == "-τ"
         @test repr(Scalar(exp, (τ,))) == "exp(τ)"      # call form
@@ -318,16 +282,14 @@ StencilCore._interlace(::NTuple{M, _DummyTerm}) where {M} = _DummyTerm{SVector{M
         @test simp(N / τ) === N
         @test simp(-(-τ)) === τ                         # double negation
 
-        # Numerical zeros / ones in Constant or Scaling .val are NOT structural
+        # Numerical zeros / ones in Constant .val are NOT structural
         # identities: simplify leaves them as Scalar nodes (until/unless the
         # value is statically encoded).
         @test simp(τ * Constant(1.0)) isa Scalar
-        @test simp(τ * Scaling{Float64}(1.0)) isa Scalar
         @test simp(τ * Constant(0.0)) isa Scalar
 
         # Fold rule, Path 1 — coefficient fold. Number-only args fold to a
-        # `Constant`; mixed Number-coefficient args fold to a `Scaling` when
-        # the parent eltype is non-Number.
+        # `Constant`.
         @test simp(Constant(2.0) + Constant(3.0)) === Constant(5.0)
         @test simp(Constant(2.0) * Constant(0.0)) === Constant(0.0)
         @test !(simp(Constant(2.0) * Constant(0.0)) isa Null)
@@ -350,9 +312,6 @@ StencilCore._interlace(::NTuple{M, _DummyTerm}) where {M} = _DummyTerm{SVector{M
         @test mat(Null{Float64}()) === 0.0
         @test mat(Unity{Float64}()) === 1.0
         @test mat(Unity{SMatrix{2, 2, Float64, 4}}()) === SMatrix{2, 2, Float64}(1, 0, 0, 1)
-        @test mat(Scaling{Float64}(1.0)) === 1.0
-        # SMatrix-shaped Scaling materializes as `val * I`.
-        @test mat(Scaling{SMatrix{2, 2, Float64}}(2)) === SMatrix{2, 2, Float64}(2, 0, 0, 2)
 
         # Scalar tree.
         @test mat(τ * Constant(3.0), (τ = 4.0,)) === 12.0
@@ -410,13 +369,13 @@ StencilCore._interlace(::NTuple{M, _DummyTerm}) where {M} = _DummyTerm{SVector{M
         y = Symbolic{:y, SVector{2, Float64}}()
         τ = Symbolic{:τ, Float64}()
 
-        # User's motivating example: ∂(2x)/∂x = 2I. The `2` is stored as Int
-        # (its input type), not widened to Float64 — Unity's coefficient is
-        # the Bool identity `true`, so `2 * true === 2::Int` preserves V.
+        # ∂(2x)/∂x: the product rule returns Constant(2) * Unity{J}(). The
+        # fold does not fire for non-Number eltypes, so the result stays as a
+        # Scalar tree. Materialization equals 2I.
         let J = SMatrix{2, 2, Float64, 4}
-            @test diff(2x, x) === Scaling{J}(2)
-            @test diff(2x, x) isa Scaling{J, Int}
-            @test mat(diff(2x, x)) === J(2.0, 0.0, 0.0, 2.0)
+            d = diff(2x, x)
+            @test d == Scalar(*, (Constant(2), Unity{J}()))
+            @test mat(d) === J(2.0, 0.0, 0.0, 2.0)
         end
 
         # Self-derivative of an SVector symbol is the structural Unity in the
@@ -427,15 +386,15 @@ StencilCore._interlace(::NTuple{M, _DummyTerm}) where {M} = _DummyTerm{SVector{M
             @test mat(diff(x3, x3)) === J(1, 0, 0, 0, 1, 0, 0, 0, 1)
         end
 
-        # Sum rule across vector terms: ∂(2x + 3x)/∂x = 5I. V stays Int.
+        # Sum rule across vector terms: ∂(2x + 3x)/∂x materializes to 5I.
         let J = SMatrix{2, 2, Float64, 4}
-            @test diff(2x + 3x, x) === Scaling{J}(5)
+            @test mat(diff(2x + 3x, x)) === J(5.0, 0.0, 0.0, 5.0)
         end
 
         # Independence: ∂y/∂x = Null{J}.
         let J = SMatrix{2, 2, Float64, 4}
             @test diff(y, x) === Null{J}()
-            @test diff(Scaling{SVector{2, Float64}}(0.0), x) === Null{J}()
+            @test diff(Constant(SVector(1.0, 0.0)), x) === Null{J}()
         end
 
         # Top-level shape-class mismatch ⇒ ArgumentError.
@@ -452,13 +411,12 @@ StencilCore._interlace(::NTuple{M, _DummyTerm}) where {M} = _DummyTerm{SVector{M
         x = Symbolic{:x, SVector{2, Float64}}()
         J  = SMatrix{2, 2, Float64, 4}
 
-        # Fold Path 1 — coefficient fold preserves matrix shape.
-        @test simp(Scaling{J}(2.0) + Scaling{J}(3.0)) === Scaling{J}(5.0)
+        # Fold Path 1 restricted to Number eltypes: `Constant(Number) *
+        # Unity{SMatrix}()` does NOT fold (non-Number result) — stays as Scalar.
+        @test simp(Constant(2.0) * Unity{J}()) isa Scalar
+        @test simp(Unity{J}() * Constant(2.0)) isa Scalar
 
-        # Fold Path 1 mixed: `Constant(Number) * Unity{SMatrix}()` compacts to
-        # `Scaling{SMatrix}(num)` — the differentiation pipeline's clean form.
-        @test simp(Constant(2.0) * Unity{J}()) === Scaling{J}(2.0)
-        @test simp(Unity{J}() * Constant(2.0)) === Scaling{J}(2.0)
+        # But Number × Number still folds:
         @test simp(Constant(2.0) + Unity{Float64}()) === Constant{Float64}(3.0)
 
         # Fold Path 2 — direct fold over non-Number Constants (the user's
@@ -467,39 +425,36 @@ StencilCore._interlace(::NTuple{M, _DummyTerm}) where {M} = _DummyTerm{SVector{M
             @test s === Constant{SVector{2, Int}}(SVector(1, 1))
         end
 
-        # Identity rule has an eltype-preservation gate: `Unity{SMatrix} * x`
+        # Identity rule eltype-preservation gate: `Unity{SMatrix} * x`
         # where `x::AbstractScalar{SVector}` has parent eltype SVector and
         # `eltype(x)` SVector — they match, so the rule fires and returns x.
         @test simp(Unity{J}() * x) === x
 
-        # But `Unity{SMatrix} * Constant{Int}` does NOT collapse (parent
-        # eltype = SMatrix, other operand eltype = Int): the rule must avoid
-        # silently changing eltype. Falls through to the fold instead, with
-        # the Int preserved (V = Int, not widened to Float64).
-        @test simp(Unity{J}() * Constant(3)) === Scaling{J}(3)
-        @test simp(Unity{J}() * Constant(3)) isa Scaling{J, Int}
+        # `Unity{SMatrix} * Constant{Int}`: eltype gate fails (SMatrix ≠ Int),
+        # identity rule does not fire. Path 1 fold also does not fire (non-Number
+        # result). Stays as a Scalar tree.
+        @test simp(Unity{J}() * Constant(3)) isa Scalar
 
-        # Scaling/Constant canonicalisation: `Scaling{matrix-shape}(c) * y`
-        # collapses to `Constant(c) * y` when the substitution preserves
-        # eltype. Both `Scaling(T, 2) * x` and `2x` reach the same canonical
-        # form.
+        # `2 * x` → simplifies to Scalar(*, (Constant(2), x)) (no fold for
+        # non-Number SVector eltype).
         let T = SVector{2, Float64}, x2 = Symbolic{:x2, T}()
             collapsed = Scalar(*, (Constant(2), x2))
-            @test simp(Scaling(T, 2) * x2) === collapsed
-            @test simp(2 * x2)             === collapsed
-            @test simp(Scaling(T, 2) * x2) === simp(2 * x2)
+            @test simp(2 * x2) === collapsed
         end
 
-        # Number-shape Scaling collapses too when eltype-safe.
-        let τ = Symbolic{:τ, Float64}()
-            @test simp(Scaling{Float64}(2.0) * τ) === Scalar(*, (Constant(2.0), τ))
-            @test simp(Scaling{Float64}(2.0) / τ) === Scalar(/, (Constant(2.0), τ))
+        # Cross-precision SMatrix × Unity: same-size square matrices with
+        # different element types — `one(J::Float64)` is still the identity for
+        # `A::SMatrix{Int}`, so the rule fires and preserves the narrower type.
+        let A = 2 * one(SMatrix{2, 2, Int, 4})
+            @test simp(Constant(A) * Unity{J}()) === Constant(A)   # right-multiply
+            @test simp(Unity{J}() * Constant(A)) === Constant(A)   # left-multiply
+            @test simp(Constant(A) / Unity{J}()) === Constant(A)   # right-divide
         end
 
-        # Eltype-preservation gate: `Scaling{SMatrix} * Constant{Int}` does
-        # NOT collapse via this rule (Int times Int loses the matrix eltype).
-        # Path 1 fold handles it instead, preserving the matrix shape.
-        @test simp(Scaling{J}(2) * Constant(3)) === Scaling{J}(6)
+        # Scalar Int * Unity{SMatrix}: shape mismatch — Int ≠ 2×2 matrix —
+        # the identity rule does not fire.  (Distinct from the existing Float64
+        # test above; both must stay as Scalar.)
+        @test simp(Constant(2) * Unity{J}()) isa Scalar
     end
 
     @testset "AbstractScalar AbstractTrees plumbing" begin
@@ -511,7 +466,6 @@ StencilCore._interlace(::NTuple{M, _DummyTerm}) where {M} = _DummyTerm{SVector{M
         @test AbstractTrees.nodevalue(Null{Float64}()) === 0.0
         @test AbstractTrees.nodevalue(Unity{Float64}()) === 1.0
         @test AbstractTrees.children(Unity{Float64}()) === ()
-        @test AbstractTrees.nodevalue(Scaling{Int}(1)) === 1
         s = τ * Constant(2.0)
         @test AbstractTrees.nodevalue(s) === *
         @test AbstractTrees.children(s) === s.args

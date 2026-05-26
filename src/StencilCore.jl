@@ -21,7 +21,7 @@ export AccessStyle, ColumnAccess, RowAccess, AbstractStencil
 export AbstractTerm, ArrayOrTermLike
 
 # Scalar algebra: abstract supertype + concrete leaves and tree node.
-export AbstractScalar, Symbolic, Constant, Scaling, Λ, Null, Unity, Scalar
+export AbstractScalar, Symbolic, Constant, Null, Unity, Scalar
 export @symbolic
 
 # CAS operations whose generic Calculus extends with AbstractTerm methods.

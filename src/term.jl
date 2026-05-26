@@ -25,7 +25,7 @@ Base.eltype(::Type{<:AbstractTerm{T}}) where {T} = T
 Base.eltype(t::AbstractTerm) = eltype(typeof(t))
 
 # Shared concrete-eltype guard, used by every leaf type whose `T` it
-# materializes / assembles into. StencilCore: Symbolic, Constant, Scaling,
+# materializes / assembles into. StencilCore: Symbolic, Constant,
 # Null, Unity. StencilCalculus: Slot, Const, …
 @inline function _assert_concrete(name::Symbol, ::Type{T}) where {T}
     isconcretetype(T) || throw(ArgumentError(

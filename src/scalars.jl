@@ -7,8 +7,6 @@
 # Concrete leaves:
 #   Symbolic{S, T}     — named, runtime-substituted variable
 #   Constant{T}        — literal value carrier (any concrete `T`)
-#   Scaling{T, V}      — `val * one(T)`; numerical coefficient × shape `T`,
-#                        with `V <: Number` (stored val type)
 #   Null{T}            — structural additive zero (dispatched-on)
 #   Unity{T}           — structural multiplicative one (dispatched-on);
 #                        requires `one(T)` to be defined ("square scalar")
@@ -25,7 +23,7 @@
 
 Supertype for cell-level scalar expressions. Reaches a single value of
 type `T` at `materialize` time (no axes). Concrete subtypes:
-[`Symbolic`](@ref), [`Constant`](@ref), [`Scaling`](@ref), [`Unity`](@ref),
+[`Symbolic`](@ref), [`Constant`](@ref), [`Unity`](@ref),
 [`Null`](@ref), [`Scalar`](@ref). Sibling of, **not** subtype of,
 [`AbstractTerm`](@ref).
 """
@@ -46,98 +44,21 @@ struct Symbolic{S, T} <: AbstractScalar{T}
 end
 Symbolic{S}() where {S} = Symbolic{S, Float64}()
 
-"""
-    Scaling{T, V <: Number}(val)
-
-Literal scalar leaf representing the value `val * one(T)`. Two type parameters:
-
-- `T`           — the materialized container type (the shape `one(·)` is taken
-  of). Listed first so the one-curly inner ctor `Scaling{T}(val)` binds the
-  curly argument to the shape tag. `T = T_raw` whenever `V <: eltype(T_raw)`;
-  otherwise `T` widens via numeric promotion (e.g. `Scaling{Float32}(1.0)`
-  yields `T = Float64`).
-- `V <: Number` — type of the stored `val`.
-
-`Λ` is an alias.
-
-The isotropic boundary form `Scaling(val::Number)` is **not** provided —
-numeric literals at the operator boundary canonicalise to [`Constant`](@ref)
-instead. Every `Scaling` carries an explicit shape tag.
-
-Constructors:
-- `Scaling{T}(val)`                           — explicit shape tag `T`.
-- `Scaling(T::Type)`                          — unit `Scaling` in the *linear-
-  map space* of `T`: a `Number` stays `T`; an `SVector{N, F}` maps to
-  `SMatrix{N, N, F}` (its Jacobian space). `val = one(eltype(·))`.
-- `Scaling(T::Type, val)`                     — same `T → linear-map space`
-  mapping, with explicit `val` stored as-is (`V = typeof(val)`).
-- `Scaling(::Type{<:AbstractScalar{S}})`      — convenience: delegates to
-  `Scaling(S)`.
-- `Scaling(::Type{<:AbstractScalar{S}}, val)` — delegates to `Scaling(S, val)`.
-"""
-struct Scaling{T, V <: Number} <: AbstractScalar{T}
-    val::V
-
-    function Scaling{Traw}(val::V) where {Traw, V <: Number}
-        E = promote_type(eltype(Traw), V)
-        T = _similar(Traw, E)
-        _assert_concrete(:Scaling, T)
-        new{T, V}(val)
-    end
-end
-
-# Two-curly form delegates through the canonicalizing one-curly inner ctor —
-# so `Scaling{T, V}(val)` and `Scaling{T}(val)` produce identical results when
-# T is in its canonical form.
-Scaling{T, V}(val::V) where {T, V <: Number} = Scaling{T}(val)
-
-# Shape-aware container synthesis: "what container looks like `S` but with
-# scalar element type `E`?". Number shapes collapse to `E`; StaticArray shapes
-# defer to StaticArrays.similar_type. Other `S` ⇒ MethodError.
-_similar(::Type{S}, ::Type{E}) where {S <: Number, E}      = E
-_similar(::Type{S}, ::Type{E}) where {S <: StaticArray, E} = similar_type(S, E)
-
 # Linear-map space of a value-space type `T` — the type whose `one(·)` is the
-# multiplicative identity for things in `T`'s algebra. Number stays itself
-# (scalar 1 is the identity). SVector{N, F} maps to the canonical square
-# SMatrix{N, N, F, N*N} (its Jacobian). Fallback returns `T` (square SMatrix
-# is its own identity space; user-defined types are the user's problem —
-# `one(T)` must work for materialization).
+# multiplicative identity for things in `T`'s algebra. Number stays itself;
+# SVector{N, F} maps to the canonical square SMatrix{N, N, F, N*N} (its
+# Jacobian). Fallback returns `T` (square SMatrix is its own identity space;
+# user-defined types are the user's problem — `one(T)` must work).
 _unity_space(::Type{T}) where {T <: Number}      = T
 _unity_space(::Type{SVector{N, F}}) where {N, F} = similar_type(SMatrix{N, N, F}, F)
 _unity_space(::Type{T}) where {T}                = T
 
 """
-    Λ
-
-Alias for [`Scaling`](@ref).
-"""
-const Λ = Scaling
-
-# Value-space ctors. `Scaling(T)` and `Scaling(T, val)` both route the `T`
-# through `_unity_space` so e.g. `Scaling(SVector{N, F})` lands in the square
-# SMatrix space (where `one(·)` is the Jacobian identity). Type-first
-# convention matches the curly form `Scaling{T}(val)`.
-function Scaling(::Type{T}) where {T}
-    Tout = _unity_space(T)
-    Scaling{Tout}(one(eltype(Tout)))
-end
-function Scaling(::Type{T}, val::Number) where {T}
-    Scaling{_unity_space(T)}(val)
-end
-
-# Symbol-anchored ctors delegate to the value-space form.
-Scaling(::Type{<:AbstractScalar{S}}) where {S}              = Scaling(S)
-Scaling(::Type{<:AbstractScalar{S}}, val::Number) where {S} = Scaling(S, val)
-
-"""
     Constant{T}(val) / Constant(val)
 
-Literal scalar leaf carrying a value `val::T` as-is. Materializes to `val`
-(no `one(·)` multiplication, unlike [`Scaling`](@ref)). `T` is any concrete
-type — `Number`, `SArray`, etc. — making `Constant` the right carrier for
-boundary literals such as `x + 1`, `v + SVector(1)` where no multiplicative
-identity of `T` is needed (or even defined).
+Literal scalar leaf carrying a value `val::T` as-is. Materializes to `val`.
+`T` is any concrete type — `Number`, `SArray`, etc. — making `Constant` the
+right carrier for boundary literals such as `x + 1`, `v + SVector(1)`.
 """
 struct Constant{T} <: AbstractScalar{T}
     val::T
@@ -206,9 +127,7 @@ function Scalar(fn::F, args::A) where {F, A<:Tuple{Vararg{AbstractScalar}}}
 end
 
 # Promote a non-AbstractScalar value to a scalar leaf at the operator boundary.
-# Wraps as `Constant` — a literal carrier, no `one(·)` multiplication. (The
-# isotropic `Scaling(val::Number)` form was removed: a Number literal at the
-# boundary is a *value*, not a "1 · identity" coefficient.)
+# Wraps as `Constant` — a literal carrier, no `one(·)` multiplication.
 asscalar(s::AbstractScalar) = s
 asscalar(x)                 = Constant(x)
 Base.convert(::Type{<:AbstractScalar}, x) = Constant(x)
@@ -244,10 +163,10 @@ end
 
 # --- Display -----------------------------------------------------------------
 # Scalars render without going through `simplify` (no rewriter at this layer
-# yet). Leaves: Symbolic prints its symbol; Constant and Scaling print their
-# stored `val`; Null and Unity print the `0`/`1` glyphs (type-agnostic, like
-# the term-side Zero). Scalar interior nodes render infix when the op is in
-# `_INFIX`, else as a call.
+# yet). Leaves: Symbolic prints its symbol; Constant prints its stored `val`;
+# Null and Unity print the `0`/`1` glyphs (type-agnostic, like the term-side
+# Zero). Scalar interior nodes render infix when the op is in `_INFIX`, else
+# as a call.
 
 const _SCALAR_INFIX = (:+, :-, :*, :/, :\, :^)
 _scalar_callsym(f) = nameof(f)
@@ -256,12 +175,32 @@ Base.show(io::IO, s::AbstractScalar) = _scalar_show(io, s)
 
 _scalar_show(io::IO, ::Symbolic{S}) where {S} = print(io, S)
 _scalar_show(io::IO, s::Constant)             = show(io, s.val)
-_scalar_show(io::IO, s::Scaling)              = show(io, s.val)
 _scalar_show(io::IO, ::Null)                  = print(io, '0')
-_scalar_show(io::IO, ::Unity)                 = print(io, '1')
+_scalar_show(io::IO, ::Unity)                 = print(io, 'U')
 
 function _scalar_show(io::IO, s::Scalar)
     op, args = _scalar_callsym(s.fn), s.args
+    # Special rendering for binary * involving Unity. Cases ordered so the
+    # most specific (numeric juxtaposition) fires first.
+    if length(args) == 2 && op === :*
+        lhs, rhs = args[1], args[2]
+        if lhs isa Constant{<:Number} && rhs isa Unity
+            # Numeric juxtaposition: "2U" — valid Julia, no parens/spaces/*
+            _scalar_show(io, lhs)
+            print(io, 'U')
+            return
+        elseif rhs isa Unity
+            # Non-numeric lhs: "τ * U" — keep * but drop outer parens
+            _scalar_show(io, lhs)
+            print(io, " * U")
+            return
+        elseif lhs isa Unity
+            # Unity on left: "U * τ" — keep * but drop outer parens
+            print(io, "U * ")
+            _scalar_show(io, rhs)
+            return
+        end
+    end
     if length(args) == 2 && op in _SCALAR_INFIX
         print(io, '(')
         _scalar_show(io, args[1])

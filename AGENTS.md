@@ -99,47 +99,54 @@ design lives in [`docs/cas.md`](../StencilCalculus/docs/cas.md).
       materialised to `val`. `T` is any concrete type (including non-`Number`
       like `SVector` — this is the carrier numeric literals canonicalise to
       at the operator boundary).
-    - **`Scaling{T, V <: Number}`** — `val::V` stored, materialises to
-      `val * one(T)`. `T` is the *materialised container type*; the one-curly
-      inner ctor `Scaling{Traw}(val)` canonicalises `Traw` and promotes
-      eltype-vs-`V` (`Scaling{Float32}(1.0)` lands at `T = Float64`). Value-
-      space outer ctors `Scaling(T)` / `Scaling(T, val)` route `T` through
-      `_unity_space` so `Scaling(SVector{N, F})` lands in the square Jacobian
-      space `SMatrix{N, N, F}`.
-    - **`Null{T}`** — structural additive zero, dispatch-matched.
-    - **`Unity{T}`** — structural multiplicative one, dispatch-matched.
-      Construction requires `one(T)` defined (`Number`, square `SMatrix`,
-      …). Outer ctor `Unity(T)` routes through `_unity_space` so
-      `Unity(SVector{N, F}) === Unity{SMatrix{N, N, F}}()`.
+    - **`Null{T}`** — structural additive zero, dispatch-matched. Displays as `"0"`.
+    - **`Unity{T}`** — structural multiplicative one, dispatch-matched. Displays
+      as `"U"`. Construction requires `one(T)` defined (`Number`, square
+      `SMatrix`, …). Outer ctor `Unity(T)` routes through `_unity_space` so
+      `Unity(SVector{N, F}) === Unity{SMatrix{N, N, F}}()`. Display of binary
+      `*` involving `Unity` is context-sensitive: `Constant{<:Number} * Unity`
+      renders as numeric juxtaposition (`"2U"`); all other `* Unity` or
+      `Unity *` cases render with explicit `*` but no outer parens
+      (`"τ * U"`, `"U * τ"`).
     - **`Scalar{F, A<:Tuple{Vararg{AbstractScalar}}, T}`** — interior node
       `fn(args…)`; `T = Base.promote_op(fn, eltype.(args)…)` computed at
       construction (a `Union{}` result throws).
 
-    All concrete `T`s are enforced via `_assert_concrete`. `Λ` is an alias
-    of `Scaling`. The `@symbolic name [T]` macro binds `name = Symbolic{:name, T}()`
-    (default `T = Float64`).
+    All concrete `T`s are enforced via `_assert_concrete`. The `@symbolic name [T]`
+    macro binds `name = Symbolic{:name, T}()` (default `T = Float64`).
 
 13. **Operator boundary canonicalises to `Constant`.** Every binary op
     `(::AbstractScalar, x)` with `x` not an `AbstractScalar` lifts as
     `Scalar(op, (·, Constant(x)))` (and symmetrically for the left slot).
     `asscalar(x) = Constant(x)` for non-scalars; `Base.convert(::Type{<:AbstractScalar}, x) = Constant(x)`.
-    The isotropic `Scaling(val::Number)` form is **not** provided — a numeric
-    literal is data, not a coefficient of `one(·)`.
 
 14. **`simplify` is purely structural.** Identity / annihilator rules
-    match by *type* — `Null` (additive zero), `Unity` (multiplicative one,
-    with an eltype-preservation gate so `Unity{SMatrix} * Constant{Int}` does
-    not silently change eltype) — never by `.val`. Numerical zeros / ones
-    sitting in `Constant.val` or `Scaling.val` are *not* collapsed to
-    `Null` / `Unity`; that step waits for a future static-value encoding
-    (`StaticFloat64`, `StaticInt`).
+    match by *type* — `Null` (additive zero), `Unity` (multiplicative one)
+    — never by `.val`. Numerical zeros / ones sitting in `Constant.val` are
+    *not* collapsed to `Null` / `Unity`; that step waits for a future
+    static-value encoding (`StaticFloat64`, `StaticInt`).
 
-    Folding has two paths: **coefficient fold** combines Number coefficients
-    from any of `Constant{<:Number}`, `Scaling`, `Unity` (coef `1`), `Null`
-    (coef `0`) — emit `Constant{eltype(s)}` (Number parent) or
-    `Scaling{eltype(s)}` (non-Number parent); **direct fold** applies the
-    operator to `.val`s of all-`Constant` args. Folding combines values; it
-    does not inspect them to decide.
+    **Shape-stability gates** prevent silently changing the eltype:
+    - `Null` additive rules (`±`) require `eltype(s) === eltype(arg)` —
+      e.g. `Null{SVector} + scalar` is not simplified (broadcasting would
+      yield a vector, not the scalar).
+    - `Unity` multiplicative rules (`*`, `/`) fire when `eltype(s) ===
+      eltype(arg)` (same type, existing) **or** `_right_unity_shape` /
+      `_left_unity_shape` applies (cross-precision same-size square matrices
+      or identity-times-vector), with the narrower stored type preserved.
+      Example: `Constant(2I::SMatrix{Int}) * Unity{SMatrix{Float64}}() →
+      Constant(2I::SMatrix{Int})`. Shape-changing cases — e.g. `Int *
+      Unity{SMatrix}` — stay as a `Scalar` tree.
+    - `Unity * Unity` (and `/`) returns `Unity{eltype(s)}()` regardless of
+      operand precision.
+
+    Folding has two paths: **coefficient fold** (Path 1) combines Number
+    coefficients from `Constant{<:Number}`, `Unity` (coef `1`), `Null` (coef
+    `0`) and emits `Constant{eltype(s)}(folded)` — but **only when
+    `eltype(s) <: Number`**; for non-Number eltypes (SMatrix Jacobians) the
+    fold does not fire and the tree stays as a `Scalar` node until
+    `materialize`. **Direct fold** (Path 2) applies the operator to `.val`s
+    of all-`Constant` args. Folding combines values; it does not inspect them.
 
 15. **`differentiate` (scalar-side).** Top-level `differentiate(s, v)`
     requires `eltype(s)` and `eltype(v)` to share *shape-class* — Number or
@@ -158,7 +165,7 @@ Exports: `AccessStyle`, `ColumnAccess`, `RowAccess`, `AbstractStencil`,
 `AbstractTerm`, `ArrayOrTermLike`, `StaticPair`, `SPair`, `StaticShift`,
 `SShift`, `dim`, `offset`, `ô`, `ê₁ … ê₉`, `LinearStencil`, `StarStencil`,
 `Stencil`, `as_linear`, `as_star`,
-`AbstractScalar`, `Symbolic`, `Constant`, `Scaling`, `Λ`, `Null`, `Unity`,
+`AbstractScalar`, `Symbolic`, `Constant`, `Null`, `Unity`,
 `Scalar`, `@symbolic`, `simplify`, `materialize`, `differentiate`,
 `derivative`.
 
@@ -185,4 +192,4 @@ Deferred: `PlanarStencil` + `as_planar`; a direct CSC kernel for the general
 `Stencil` (narrowing-only for now); CSR (`RowAccess`) assembly; non-square
 SArray Jacobians (cross-shape `differentiate`); true SVector×SVector /
 SMatrix×SMatrix chain rules in the scalar tree; static-value encoding for
-`Constant` / `Scaling.val` (would re-enable value-based identity rules).
+`Constant.val` (would re-enable value-based identity rules).

@@ -9,9 +9,6 @@ AbstractTrees.children(::Symbolic)                     = ()
 AbstractTrees.nodevalue(s::Constant) = s.val
 AbstractTrees.children(::Constant)   = ()
 
-AbstractTrees.nodevalue(s::Scaling) = s.val
-AbstractTrees.children(::Scaling)   = ()
-
 AbstractTrees.nodevalue(::Null{T}) where {T} = zero(T)
 AbstractTrees.children(::Null)               = ()
 
