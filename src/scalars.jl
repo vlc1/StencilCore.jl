@@ -1,11 +1,12 @@
-# Scalar algebra: a hierarchy parallel to AbstractTerm but **without spatial
+# Scalar algebra: a hierarchy parallel to AbstractPointwise but **without spatial
 # extent**. An AbstractScalar{T} materializes to a single value of type `T`;
-# an AbstractTerm{T} materializes to an array whose cells hold values of type
-# `T`. The two are bridged by `Fill` (defined in StencilCalculus), which wraps
-# an AbstractScalar inside an AbstractTerm so it broadcasts over the grid.
+# an AbstractPointwise{T} materializes to an array whose cells hold values of
+# type `T`. The two are bridged by `Fill` (defined in StencilCalculus), which
+# wraps an AbstractScalar inside an AbstractPointwise so it broadcasts over the
+# grid.
 #
 # Concrete leaves:
-#   Symbolic{S, T}     — named, runtime-substituted variable
+#   Var{S, T}          — named, runtime-substituted variable
 #   Constant{T}        — literal value carrier (any concrete `T`)
 #   Null{T}            — structural additive zero (dispatched-on)
 #   Unity{T}           — structural multiplicative one (dispatched-on);
@@ -23,9 +24,9 @@
 
 Supertype for cell-level scalar expressions. Reaches a single value of
 type `T` at `materialize` time (no axes). Concrete subtypes:
-[`Symbolic`](@ref), [`Constant`](@ref), [`Unity`](@ref),
+[`Var`](@ref), [`Constant`](@ref), [`Unity`](@ref),
 [`Null`](@ref), [`Scalar`](@ref). Sibling of, **not** subtype of,
-[`AbstractTerm`](@ref).
+[`AbstractPointwise`](@ref).
 """
 abstract type AbstractScalar{T} end
 
@@ -33,25 +34,23 @@ Base.eltype(::Type{<:AbstractScalar{T}}) where {T} = T
 Base.eltype(s::AbstractScalar) = eltype(typeof(s))
 
 """
-    Symbolic{S, T}()
+    Var{S, T}()
 
 Named, runtime-substituted scalar parameter `S` (a `Symbol`) of concrete type
 `T` (default `Float64`). Materializes to the value supplied at the keyword `S`
 of the `pairs` NamedTuple — like [`Slot`](@ref) but without per-cell indexing.
 """
-struct Symbolic{S, T} <: AbstractScalar{T}
-    Symbolic{S, T}() where {S, T} = (_assert_concrete(:Symbolic, T); new{S, T}())
+struct Var{S, T} <: AbstractScalar{T}
+    Var{S, T}() where {S, T} = (_assert_concrete(:Var, T); new{S, T}())
 end
-Symbolic{S}() where {S} = Symbolic{S, Float64}()
+Var{S}() where {S} = Var{S, Float64}()
 
 # Linear-map space of a value-space type `T` — the type whose `one(·)` is the
-# multiplicative identity for things in `T`'s algebra. Number stays itself;
-# SVector{N, F} maps to the canonical square SMatrix{N, N, F, N*N} (its
-# Jacobian). Fallback returns `T` (square SMatrix is its own identity space;
-# user-defined types are the user's problem — `one(T)` must work).
-_unity_space(::Type{T}) where {T <: Number}      = T
-_unity_space(::Type{SVector{N, F}}) where {N, F} = similar_type(SMatrix{N, N, F}, F)
-_unity_space(::Type{T}) where {T}                = T
+# multiplicative identity for things in `T`'s algebra. Delegates to
+# `_jacobian_type(T, T)` (defined in `differentiate.jl`, resolved at call time):
+# Number stays itself; SVector{N, F} maps to the canonical square SMatrix{N, N, F};
+# same-type T returns T (e.g. SMatrix is its own identity space).
+_unity_space(::Type{T}) where {T} = _jacobian_type(T, T)
 
 """
     Constant{T}(val) / Constant(val)
@@ -65,12 +64,14 @@ struct Constant{T} <: AbstractScalar{T}
     Constant{T}(val) where {T} = (_assert_concrete(:Constant, T); new{T}(convert(T, val)))
 end
 Constant(val::T) where {T} = Constant{T}(val)
+# Idempotent lift: scalars are already in the algebra.
+Constant(s::AbstractScalar) = s
 
 """
     Null{T}()
 
 Type-level additive identity / structural zero for [`AbstractScalar`](@ref):
-the scalar-side analogue of [`AbstractTerm`](@ref) `Zero`. Materializes to
+the scalar-side analogue of [`AbstractPointwise`](@ref) `Zero`. Materializes to
 `zero(T)`; lets the scalar `simplify` and `differentiate` rules collapse by
 dispatch.
 """
@@ -109,7 +110,7 @@ Unity(::T) where {T}       = Unity{_unity_space(T)}()
 Interior node of a scalar-tree: applies `fn` to scalar `args` component-wise.
 The element type `T = Base.promote_op(fn, eltype.(args)...)` is computed
 **at construction**; a `Union{}` result throws (the node is unconstructable).
-Term-side analogue: [`AbstractTerm`](@ref) `Term`.
+Pointwise-side analogue: [`AbstractPointwise`](@ref) [`Pointwise`](@ref).
 """
 struct Scalar{F, A<:Tuple{Vararg{AbstractScalar}}, T} <: AbstractScalar{T}
     fn::F
@@ -147,18 +148,36 @@ for op in (:-, :+, :exp, :sin, :cos, :tan, :log, :sqrt, :abs, :sign)
     @eval Base.$op(a::AbstractScalar) = Scalar($op, (a,))
 end
 
+# --- Indexing overloads -------------------------------------------------------
+# Restricted to AbstractScalar{<:AbstractArray} so that scalar-valued vars
+# (e.g. @var τ Float64) still produce a MethodError on x[1].
+#
+# IntLike: a concrete Int or a symbolic scalar that materializes to Int.
+# Constant(::AbstractScalar) = identity, so Constant.(I)... works uniformly
+# for any mix of Int and AbstractScalar{Int} indices.
+const IntLike = Union{AbstractScalar{Int}, Int}
+
+# IndexLinear: flat integer into any N-D array eltype.
+Base.getindex(this::AbstractScalar{<:AbstractArray}, i::IntLike) =
+    Scalar(getindex, (this, Constant(i)))
+
+# IndexCartesian: exactly N integer indices for an N-D array eltype.
+# For N=1 this is more specific than IndexLinear, so Julia prefers it.
+Base.getindex(this::AbstractScalar{<:AbstractArray{T,N}}, I::Vararg{IntLike,N}) where {T,N} =
+    Scalar(getindex, (this, Constant.(I)...))
+
 # --- Constructor macro -------------------------------------------------------
 
 """
-    @symbolic name [T = Float64]
+    @var name [T = Float64]
 
-Bind `name` to `Symbolic{:name, T}()`. `@symbolic τ` ≡
-`τ = Symbolic{:τ, Float64}()`; `@symbolic τ Float32` ≡
-`τ = Symbolic{:τ, Float32}()`. Term-side analogue: [`@slot`](@ref).
+Bind `name` to `Var{:name, T}()`. `@var τ` ≡
+`τ = Var{:τ, Float64}()`; `@var τ Float32` ≡
+`τ = Var{:τ, Float32}()`. Term-side analogue: [`@slot`](@ref).
 """
-macro symbolic(name, T = :Float64)
-    name isa Symbol || throw(ArgumentError("@symbolic expects a variable name, got `$(name)`"))
-    :($(esc(name)) = $Symbolic{$(QuoteNode(name)), $(esc(T))}())
+macro var(name, T = :Float64)
+    name isa Symbol || throw(ArgumentError("@var expects a variable name, got `$(name)`"))
+    :($(esc(name)) = $Var{$(QuoteNode(name)), $(esc(T))}())
 end
 
 # --- Display -----------------------------------------------------------------
@@ -173,7 +192,7 @@ _scalar_callsym(f) = nameof(f)
 
 Base.show(io::IO, s::AbstractScalar) = _scalar_show(io, s)
 
-_scalar_show(io::IO, ::Symbolic{S}) where {S} = print(io, S)
+_scalar_show(io::IO, ::Var{S}) where {S}     = print(io, S)
 _scalar_show(io::IO, s::Constant)             = show(io, s.val)
 _scalar_show(io::IO, ::Null)                  = print(io, '0')
 _scalar_show(io::IO, ::Unity)                 = print(io, 'U')
@@ -207,6 +226,14 @@ function _scalar_show(io::IO, s::Scalar)
         print(io, ' ', op, ' ')
         _scalar_show(io, args[2])
         print(io, ')')
+    elseif op === :getindex && length(args) ≥ 2
+        _scalar_show(io, args[1])
+        print(io, '[')
+        for (k, idx) in enumerate(args[2:end])
+            k > 1 && print(io, ", ")
+            _scalar_show(io, idx)
+        end
+        print(io, ']')
     elseif length(args) == 1 && op === :-
         print(io, '-')
         _scalar_show(io, args[1])

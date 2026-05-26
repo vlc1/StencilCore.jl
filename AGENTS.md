@@ -15,17 +15,17 @@ design lives in [`docs/cas.md`](../StencilCalculus/docs/cas.md).
    carries `S` as its **last** type parameter. The accessor
    `AccessStyle(st)` / `AccessStyle(::Type)` lives once at the supertype.
 
-2. **`AbstractTerm{T}` — array-like, dimension-/size-less.** `T` is the
-   materialized element type (concrete or abstract): a term "behaves like
-   an array whose `eltype` is `T`", with grid rank `N` unknown until it is
-   substituted/materialized. `eltype(::Type{<:AbstractTerm{T}}) = T`.
+2. **`AbstractPointwise{T}` — array-like, dimension-/size-less.** `T` is the
+   materialized element type (concrete or abstract): a pointwise expression
+   "behaves like an array whose `eltype` is `T`", with grid rank `N` unknown
+   until it is substituted/materialized. `eltype(::Type{<:AbstractPointwise{T}}) = T`.
    Concrete subtypes live in `StencilCalculus`; StencilCore owns only the
    abstract type so coefficients can be named without depending on the CAS.
 
-3. **`ArrayOrTermLike{T} = Union{AbstractArray{T}, AbstractTerm{T}}`** is
+3. **`ArrayOrTermLike{T} = Union{AbstractArray{T}, AbstractPointwise{T}}`** is
    the coefficient type of every stencil. A stencil is **assemblable** when
    its coefficient is a concrete `AbstractArray`, **symbolic** when it is an
-   `AbstractTerm` (must be `materialize`d first).
+   `AbstractPointwise` (must be `materialize`d first).
 
 4. **Type-level offsets (`StaticPair` / `StaticShift`).** Shifts enter via
    compile-time-known DSL operators, so they are encoded in the type system
@@ -90,10 +90,10 @@ design lives in [`docs/cas.md`](../StencilCalculus/docs/cas.md).
     explicit operation.
 
 12. **Scalar algebra — `AbstractScalar{T}`.** Sibling of, *not* subtype of,
-    `AbstractTerm`. A scalar materialises to **one value** of type `T` (no
+    `AbstractPointwise`. A scalar materialises to **one value** of type `T` (no
     axes). Five concrete leaves plus one interior node:
 
-    - **`Symbolic{S, T}`** — named substitution leaf; `S` is a `Symbol`,
+    - **`Var{S, T}`** — named substitution leaf; `S` is a `Symbol`,
       `T` the materialised eltype.
     - **`Constant{T}`** — literal value carrier; `val::T` stored as-is and
       materialised to `val`. `T` is any concrete type (including non-`Number`
@@ -110,15 +110,24 @@ design lives in [`docs/cas.md`](../StencilCalculus/docs/cas.md).
       (`"τ * U"`, `"U * τ"`).
     - **`Scalar{F, A<:Tuple{Vararg{AbstractScalar}}, T}`** — interior node
       `fn(args…)`; `T = Base.promote_op(fn, eltype.(args)…)` computed at
-      construction (a `Union{}` result throws).
+      construction (a `Union{}` result throws). Named `Scalar` to mirror the
+      convention: the interior node of `AbstractX` is named `X` (cf.
+      `AbstractPointwise` → `Pointwise`).
 
-    All concrete `T`s are enforced via `_assert_concrete`. The `@symbolic name [T]`
-    macro binds `name = Symbolic{:name, T}()` (default `T = Float64`).
+    All concrete `T`s are enforced via `_assert_concrete`. The `@var name [T]`
+    macro binds `name = Var{:name, T}()` (default `T = Float64`).
 
 13. **Operator boundary canonicalises to `Constant`.** Every binary op
     `(::AbstractScalar, x)` with `x` not an `AbstractScalar` lifts as
     `Scalar(op, (·, Constant(x)))` (and symmetrically for the left slot).
     `asscalar(x) = Constant(x)` for non-scalars; `Base.convert(::Type{<:AbstractScalar}, x) = Constant(x)`.
+    `Constant(s::AbstractScalar) = s` (idempotent lift — scalars are already in
+    the algebra). This makes `Constant.(args)...` work uniformly for any mix of
+    concrete values and symbolic scalars without branching.
+
+    **`IntLike = Union{AbstractScalar{Int}, Int}`** — the index type accepted by
+    `getindex` overloads on `AbstractScalar{<:AbstractArray}`. Covers both
+    concrete `Int` indices and symbolic `@var i Int` expressions.
 
 14. **`simplify` is purely structural.** Identity / annihilator rules
     match by *type* — `Null` (additive zero), `Unity` (multiplicative one)
@@ -154,7 +163,7 @@ design lives in [`docs/cas.md`](../StencilCalculus/docs/cas.md).
     the **Jacobian** `J = _jacobian_type(eltype(s), eltype(v))`:
     `promote_type` for Number/Number, square `SMatrix{N, N, promote_type(F1,
     F2)}` for `SVector{N, F1}` / `SVector{N, F2}`. `J` is threaded through
-    `_sdiff` so every `Null` and self-leaf `Unity` is typed by it. Product-
+    `_diff_scalar` so every `Null` and self-leaf `Unity` is typed by it. Product-
     rule composition is position-aware on `*` (Q3-A): for `i = 1`, contrib
     is `Scalar(*, (sub, dfn))` — left-multiplication, correct under non-
     commuting `*`. The derivative table is otherwise mechanical.
@@ -162,17 +171,17 @@ design lives in [`docs/cas.md`](../StencilCalculus/docs/cas.md).
 ## Public surface
 
 Exports: `AccessStyle`, `ColumnAccess`, `RowAccess`, `AbstractStencil`,
-`AbstractTerm`, `ArrayOrTermLike`, `StaticPair`, `SPair`, `StaticShift`,
+`AbstractPointwise`, `ArrayOrTermLike`, `StaticPair`, `SPair`, `StaticShift`,
 `SShift`, `dim`, `offset`, `ô`, `ê₁ … ê₉`, `LinearStencil`, `StarStencil`,
 `Stencil`, `as_linear`, `as_star`,
-`AbstractScalar`, `Symbolic`, `Constant`, `Null`, `Unity`,
-`Scalar`, `@symbolic`, `simplify`, `materialize`, `differentiate`,
+`AbstractScalar`, `Var`, `Constant`, `Null`, `Unity`,
+`Scalar`, `IntLike`, `@var`, `simplify`, `materialize`, `differentiate`,
 `derivative`.
 
-Files: `access.jl` (trait + supertype), `term.jl` (`AbstractTerm` +
+Files: `access.jl` (trait + supertype), `term.jl` (`AbstractPointwise` +
 `ArrayOrTermLike` + `_assert_concrete`), `staticshift.jl` (`StaticPair` /
 `StaticShift` + algebra + `show`), `scalars.jl` (`AbstractScalar` family +
-`@symbolic` + operator overloads + `_unity_space`), `trees.jl`
+`@var` + operator overloads + `_unity_space`), `trees.jl`
 (`AbstractTrees` plumbing for scalars), `simplify.jl` (`simplify` + identity
 + fold rules), `materialize.jl` (`materialize` + `_scalar_body_expr`),
 `differentiate.jl` (`differentiate` + `derivative` table + `_jacobian_type`

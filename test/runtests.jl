@@ -5,7 +5,7 @@ using StaticArrays: SUnitRange, SVector, SMatrix
 
 # Structs must be defined at top level (not inside @testset scopes).
 struct _DummyStencil{S} <: AbstractStencil{S} end
-struct _DummyTerm{T} <: AbstractTerm{T} end
+struct _DummyTerm{T} <: AbstractPointwise{T} end
 
 # Symbolic half of the SoA→AoS coefficient combiner (the CAS provides the real
 # one): stub it for _DummyTerm so symbolic narrowing can be exercised here.
@@ -21,7 +21,7 @@ StencilCore._interlace(::NTuple{M, _DummyTerm}) where {M} = _DummyTerm{SVector{M
         @test RowAccess    <: AccessStyle
     end
 
-    @testset "AbstractTerm / ArrayOrTermLike" begin
+    @testset "AbstractPointwise / ArrayOrTermLike" begin
         @test eltype(_DummyTerm{Float64}) === Float64
         @test eltype(_DummyTerm{Float64}()) === Float64
         @test _DummyTerm{Float64}() isa ArrayOrTermLike{Float64}
@@ -168,11 +168,11 @@ StencilCore._interlace(::NTuple{M, _DummyTerm}) where {M} = _DummyTerm{SVector{M
     end
 
     @testset "AbstractScalar leaves + eltype" begin
-        τ = Symbolic{:τ, Float64}()
+        τ = Var{:τ, Float64}()
         @test τ isa AbstractScalar{Float64}
         @test eltype(τ) === Float64
-        @test Symbolic{:τ}() isa Symbolic{:τ, Float64}                      # default T = Float64
-        @test eltype(Symbolic{:τ, Float32}()) === Float32
+        @test Var{:τ}() isa Var{:τ, Float64}                      # default T = Float64
+        @test eltype(Var{:τ, Float32}()) === Float32
 
         # Constant: any concrete T; stores `val` as-is.
         @test Constant(2.0) isa Constant{Float64}
@@ -203,19 +203,19 @@ StencilCore._interlace(::NTuple{M, _DummyTerm}) where {M} = _DummyTerm{SVector{M
         @test Null(7) === Null{Int}()
 
         # T must be concrete.
-        @test_throws ArgumentError Symbolic{:s, Real}()
+        @test_throws ArgumentError Var{:s, Real}()
         @test_throws ArgumentError Null{Integer}()
     end
 
-    @testset "@symbolic macro" begin
-        @symbolic τ
-        @symbolic dt Float32
-        @test τ === Symbolic{:τ, Float64}()
-        @test dt === Symbolic{:dt, Float32}()
+    @testset "@var macro" begin
+        @var τ
+        @var dt Float32
+        @test τ === Var{:τ, Float64}()
+        @test dt === Var{:dt, Float32}()
     end
 
     @testset "Scalar tree node + operator overloads" begin
-        τ = Symbolic{:τ, Float64}(); α = Constant(2)
+        τ = Var{:τ, Float64}(); α = Constant(2)
         # Binary op among AbstractScalars builds a Scalar node.
         s = τ * α
         @test s isa Scalar{typeof(*)}
@@ -228,7 +228,7 @@ StencilCore._interlace(::NTuple{M, _DummyTerm}) where {M} = _DummyTerm{SVector{M
         s3 = 4 - τ
         @test s3.args[1] === Constant(4)
         # Non-Number literal at the boundary: the bug-motivating SVector case.
-        v = Symbolic{:v, SVector{1, Int}}()
+        v = Var{:v, SVector{1, Int}}()
         sv = v + SVector(1)
         @test sv isa Scalar{typeof(+)}
         @test sv.args[2] === Constant(SVector(1))
@@ -237,11 +237,11 @@ StencilCore._interlace(::NTuple{M, _DummyTerm}) where {M} = _DummyTerm{SVector{M
         @test sin(τ) isa Scalar{typeof(sin)}
 
         # Union{}-result Scalars throw at construction.
-        @test_throws ArgumentError Scalar(+, (Symbolic{:s, String}(), Symbolic{:n, Float64}()))
+        @test_throws ArgumentError Scalar(+, (Var{:s, String}(), Var{:n, Float64}()))
     end
 
     @testset "AbstractScalar show" begin
-        τ = Symbolic{:τ, Float64}()
+        τ = Var{:τ, Float64}()
         @test repr(τ) == "τ"
         @test repr(Constant(2.0)) == "2.0"
         @test repr(Constant(3)) == "3"
@@ -258,7 +258,7 @@ StencilCore._interlace(::NTuple{M, _DummyTerm}) where {M} = _DummyTerm{SVector{M
     end
 
     @testset "AbstractScalar simplify" begin
-        τ = Symbolic{:τ, Float64}()
+        τ = Var{:τ, Float64}()
         N = Null{Float64}()
         U = Unity{Float64}()                   # the structural multiplicative one
         simp = StencilCore.simplify
@@ -301,7 +301,7 @@ StencilCore._interlace(::NTuple{M, _DummyTerm}) where {M} = _DummyTerm{SVector{M
     end
 
     @testset "AbstractScalar materialize" begin
-        τ = Symbolic{:τ, Float64}()
+        τ = Var{:τ, Float64}()
         mat = StencilCore.materialize
 
         # Leaves.
@@ -326,8 +326,8 @@ StencilCore._interlace(::NTuple{M, _DummyTerm}) where {M} = _DummyTerm{SVector{M
     end
 
     @testset "AbstractScalar differentiate" begin
-        τ = Symbolic{:τ, Float64}(); α = Constant(2.0)
-        η = Symbolic{:η, Float64}()
+        τ = Var{:τ, Float64}(); α = Constant(2.0)
+        η = Var{:η, Float64}()
         diff = StencilCore.differentiate
         U = Unity{Float64}()
 
@@ -358,16 +358,25 @@ StencilCore._interlace(::NTuple{M, _DummyTerm}) where {M} = _DummyTerm{SVector{M
         @test diff(Constant(2), τ) === Null{Float64}()          # Int leaf, Float64 variable
         @test diff(Null{Int}(), τ) === Null{Float64}()
 
+        # tan is now supported: ∂tan(τ)/∂τ = 1 + tan(τ)².
+        @test diff(sin(τ), τ) == Scalar(cos, (τ,))              # already tested above; confirm consistency
+        let d = diff(tan(τ), τ)
+            @test StencilCore.materialize(d, (τ = π/4,)) ≈ 2.0  # sec²(π/4) = 2
+        end
+
         # No rule for an arbitrary primitive ⇒ throws when the chain rule fires.
-        @test_throws ArgumentError diff(Scalar(tan, (τ,)), τ)
+        struct _NoRuleFn end
+        (::_NoRuleFn)(x) = x
+        norf = _NoRuleFn()
+        @test_throws ArgumentError diff(Scalar(norf, (τ,)), τ)
     end
 
     @testset "AbstractScalar differentiate (SVector / Jacobian)" begin
         diff = StencilCore.differentiate
         mat  = StencilCore.materialize
-        x = Symbolic{:x, SVector{2, Float64}}()
-        y = Symbolic{:y, SVector{2, Float64}}()
-        τ = Symbolic{:τ, Float64}()
+        x = Var{:x, SVector{2, Float64}}()
+        y = Var{:y, SVector{2, Float64}}()
+        τ = Var{:τ, Float64}()
 
         # ∂(2x)/∂x: the product rule returns Constant(2) * Unity{J}(). The
         # fold does not fire for non-Number eltypes, so the result stays as a
@@ -381,7 +390,7 @@ StencilCore._interlace(::NTuple{M, _DummyTerm}) where {M} = _DummyTerm{SVector{M
         # Self-derivative of an SVector symbol is the structural Unity in the
         # Jacobian (square SMatrix) shape.
         let J = SMatrix{3, 3, Float32, 9}
-            x3 = Symbolic{:x3, SVector{3, Float32}}()
+            x3 = Var{:x3, SVector{3, Float32}}()
             @test diff(x3, x3) === Unity{J}()
             @test mat(diff(x3, x3)) === J(1, 0, 0, 0, 1, 0, 0, 0, 1)
         end
@@ -401,14 +410,14 @@ StencilCore._interlace(::NTuple{M, _DummyTerm}) where {M} = _DummyTerm{SVector{M
         @test_throws ArgumentError diff(τ, x)
         @test_throws ArgumentError diff(x, τ)
         # Same-class but mismatched N ⇒ also rejected.
-        let x4 = Symbolic{:x4, SVector{4, Float64}}()
+        let x4 = Var{:x4, SVector{4, Float64}}()
             @test_throws ArgumentError diff(x, x4)
         end
     end
 
     @testset "AbstractScalar simplify (shape-aware)" begin
         simp = StencilCore.simplify
-        x = Symbolic{:x, SVector{2, Float64}}()
+        x = Var{:x, SVector{2, Float64}}()
         J  = SMatrix{2, 2, Float64, 4}
 
         # Fold Path 1 restricted to Number eltypes: `Constant(Number) *
@@ -437,7 +446,7 @@ StencilCore._interlace(::NTuple{M, _DummyTerm}) where {M} = _DummyTerm{SVector{M
 
         # `2 * x` → simplifies to Scalar(*, (Constant(2), x)) (no fold for
         # non-Number SVector eltype).
-        let T = SVector{2, Float64}, x2 = Symbolic{:x2, T}()
+        let T = SVector{2, Float64}, x2 = Var{:x2, T}()
             collapsed = Scalar(*, (Constant(2), x2))
             @test simp(2 * x2) === collapsed
         end
@@ -458,7 +467,7 @@ StencilCore._interlace(::NTuple{M, _DummyTerm}) where {M} = _DummyTerm{SVector{M
     end
 
     @testset "AbstractScalar AbstractTrees plumbing" begin
-        τ = Symbolic{:τ, Float64}()
+        τ = Var{:τ, Float64}()
         @test AbstractTrees.nodevalue(τ) === (:τ, Float64)
         @test AbstractTrees.children(τ) === ()
         @test AbstractTrees.nodevalue(Constant(2.5)) === 2.5
@@ -469,6 +478,55 @@ StencilCore._interlace(::NTuple{M, _DummyTerm}) where {M} = _DummyTerm{SVector{M
         s = τ * Constant(2.0)
         @test AbstractTrees.nodevalue(s) === *
         @test AbstractTrees.children(s) === s.args
+    end
+
+    @testset "AbstractScalar getindex" begin
+        @var x SVector{2, Float64}
+
+        # 1-D: IndexLinear and IndexCartesian (N=1) both produce the same node;
+        # Julia prefers Cartesian (more specific first arg) — result is identical.
+        s = x[1]
+        @test s isa Scalar{typeof(getindex)}
+        @test eltype(s) === Float64
+        @test repr(s) == "x[1]"
+        @test materialize(s, (x = SVector(3.0, 4.0),)) === 3.0
+        @test materialize(x[2], (x = SVector(3.0, 4.0),)) === 4.0
+
+        # Symbolic index (AbstractScalar{Int}): Constant(i) == i (identity)
+        @var i Int
+        @test Constant(i) === i                          # idempotent lift
+        si = x[i]
+        @test si isa Scalar{typeof(getindex)}
+        @test eltype(si) === Float64
+        @test repr(si) == "x[i]"
+        @test materialize(si, (x = SVector(3.0, 4.0), i = 2)) === 4.0
+
+        # Matrix-valued scalar — IndexLinear (single Int, flat column-major)
+        @var M SMatrix{2, 3, Float64, 6}
+        sl = M[3]
+        @test sl isa Scalar{typeof(getindex)}
+        @test eltype(sl) === Float64
+        @test repr(sl) == "M[3]"
+        Mval = SMatrix{2,3}(1.0, 2.0, 3.0, 4.0, 5.0, 6.0)
+        @test materialize(sl, (M = Mval,)) === 3.0   # column-major: [1,2,3,4,5,6]
+
+        # Matrix-valued scalar — IndexCartesian (two Ints)
+        sc = M[1, 2]
+        @test sc isa Scalar{typeof(getindex)}
+        @test eltype(sc) === Float64
+        @test repr(sc) == "M[1, 2]"
+        @test materialize(sc, (M = Mval,)) === 3.0   # row 1, col 2 = index 3
+
+        # Matrix-valued scalar — IndexCartesian with symbolic index
+        sc_sym = M[1, i]
+        @test sc_sym isa Scalar{typeof(getindex)}
+        @test eltype(sc_sym) === Float64
+        @test repr(sc_sym) == "M[1, i]"
+        @test materialize(sc_sym, (M = Mval, i = 2)) === 3.0
+
+        # Scalar-valued var does NOT support getindex (correct MethodError)
+        @var τ Float64
+        @test_throws MethodError τ[1]
     end
 
 end

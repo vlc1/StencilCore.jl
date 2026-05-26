@@ -10,15 +10,15 @@
 """
     materialize(s::AbstractScalar, pairs::NamedTuple = (;))
 
-Substitute the [`Symbolic`](@ref) leaves named in `pairs` into `s` and reduce
+Substitute the [`Var`](@ref) leaves named in `pairs` into `s` and reduce
 to a single value of type `eltype(s)`. The scalar-side analogue of
 [`StencilCalculus.materialize`](@ref).
 """
-materialize(::Symbolic{S}, pairs::NamedTuple) where {S}             = pairs[S]
-materialize(::Null{T}, ::NamedTuple = (;)) where {T}                = zero(T)
-materialize(::Unity{T}, ::NamedTuple = (;)) where {T}               = one(T)
-materialize(c::Constant, ::NamedTuple = (;))                        = c.val
-materialize(s::Scalar, pairs::NamedTuple = (;))                     =
+materialize(::Var{S}, pairs::NamedTuple) where {S}              = pairs[S]
+materialize(::Null{T}, ::NamedTuple = (;)) where {T}            = zero(T)
+materialize(::Unity{T}, ::NamedTuple = (;)) where {T}           = one(T)
+materialize(c::Constant, ::NamedTuple = (;))                    = c.val
+materialize(s::Scalar, pairs::NamedTuple = (;))                    =
     s.fn(map(a -> materialize(a, pairs), s.args)...)
 
 """
@@ -29,7 +29,7 @@ codegen `args::NamedTuple` context (no per-cell indices — scalars are
 position-independent). Used by `_body_expr(::Fill{<:AbstractScalar}, …)` on
 the term side. Returns an `Expr` suitable for embedding in a larger AST.
 """
-_scalar_body_expr(::Symbolic{S}) where {S}       = Expr(:., :args, QuoteNode(S))
+_scalar_body_expr(::Var{S}) where {S}            = Expr(:., :args, QuoteNode(S))
 _scalar_body_expr(::Null{T}) where {T}           = Expr(:call, :zero, T)
 _scalar_body_expr(::Unity{T}) where {T}          = Expr(:call, :one, T)
 _scalar_body_expr(c::Constant)                   = c.val

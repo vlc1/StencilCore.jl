@@ -24,7 +24,7 @@ Type parameters:
 - `E<:SVector{L}`: coefficient element type (the per-column `SVector`);
   the scalar is `eltype(E)`.
 - `A<:ArrayOrTermLike{E}`: the coefficient container — a concrete
-  `AbstractArray{E}` (assemblable) or a symbolic `AbstractTerm{E}`.
+  `AbstractArray{E}` (assemblable) or a symbolic `AbstractPointwise{E}`.
   **`N` (grid rank) is not a stencil parameter**: it is `ndims(A)` for a
   concrete coefficient, and unknown (resolved at `materialize`) for a
   symbolic one.
@@ -55,7 +55,7 @@ struct LinearStencil{D, O, L, E<:SVector{L}, A<:ArrayOrTermLike{E}, S<:AccessSty
     function LinearStencil{D}(
         ::Type{S},
         offsets::SUnitRange{O, L},
-        term::AbstractTerm{SVector{L, T}},
+        term::AbstractPointwise{SVector{L, T}},
     ) where {D, S<:AccessStyle, O, L, T}
         D isa Int && D >= 1 || throw(ArgumentError(
             "stencil dimension D must be a positive Int (got $D)"))
@@ -70,7 +70,7 @@ LinearStencil{D}(offsets, term) where {D} = LinearStencil{D}(ColumnAccess, offse
 # method matched (coefficient not an Array/Term of SVector{L}).
 function LinearStencil{D}(::Type{S}, offsets::SUnitRange{O, L}, term) where {D, S<:AccessStyle, O, L}
     term isa ArrayOrTermLike || throw(ArgumentError(
-        "term must be an AbstractArray or AbstractTerm with eltype SVector{$L, T} " *
+        "term must be an AbstractArray or AbstractPointwise with eltype SVector{$L, T} " *
         "(got $(typeof(term)))"))
     E = eltype(term)
     E <: SVector || throw(ArgumentError(
@@ -87,7 +87,7 @@ function LinearStencil{D}(::Type{S}, offsets, term) where {D, S<:AccessStyle}
     throw(ArgumentError(
         "offsets must be a StaticArrays.SUnitRange (contiguous unit-stride). " *
         "Got $(typeof(offsets)). Construct one via SUnitRange(δ_min, δ_max), " *
-        "and supply term as an AbstractArray or AbstractTerm whose elements are " *
+        "and supply term as an AbstractArray or AbstractPointwise whose elements are " *
         "SVector{L} of coefficients in ascending-offset order (element[1] is for δ_min)."))
 end
 
@@ -149,7 +149,7 @@ struct StarStencil{L, N, M, E<:SVector{M}, A<:ArrayOrTermLike{E}, S<:AccessStyle
     # Symbolic-term coefficient: grid rank derived from (L, M).
     function StarStencil{L}(
         ::Type{S},
-        term::AbstractTerm{SVector{M, T}},
+        term::AbstractPointwise{SVector{M, T}},
     ) where {L, S<:AccessStyle, M, T}
         N = _star_dims(L, M)
         new{L, N, M, SVector{M, T}, typeof(term), S}(term)
@@ -163,7 +163,7 @@ StarStencil{L}(term) where {L} = StarStencil{L}(ColumnAccess, term)
 # method matched (coefficient not an Array/Term of SVector).
 function StarStencil{L}(::Type{S}, term) where {L, S<:AccessStyle}
     term isa ArrayOrTermLike || throw(ArgumentError(
-        "term must be an AbstractArray or AbstractTerm with eltype SVector{M, T} " *
+        "term must be an AbstractArray or AbstractPointwise with eltype SVector{M, T} " *
         "(got $(typeof(term)))"))
     E = eltype(term)
     E <: SVector || throw(ArgumentError(

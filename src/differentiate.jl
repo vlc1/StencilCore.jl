@@ -95,6 +95,9 @@ _jacobian_type(::Type{Tout}, ::Type{Tin}) where {Tout<:Number, Tin<:Number} =
 # `SMatrix{N, N, F, N*N}` that `_assert_concrete` accepts.
 _jacobian_type(::Type{SVector{N, F1}}, ::Type{SVector{N, F2}}) where {N, F1, F2} =
     similar_type(SMatrix{N, N, F1}, promote_type(F1, F2))
+# Same-type fallback: the self-Jacobian of `T` is `T` itself (e.g. SMatrix is
+# its own linear-map space; user-defined types must satisfy `one(T)` ↦ identity).
+_jacobian_type(::Type{T}, ::Type{T}) where {T} = T
 _jacobian_type(::Type{T1}, ::Type{T2}) where {T1, T2} = throw(ArgumentError(
     "differentiate: unsupported shape pair eltype(s)=$T1 vs eltype(v)=$T2. " *
     "Only (Number, Number) and matching-N (SVector{N}, SVector{N}) pairs are " *
@@ -102,7 +105,7 @@ _jacobian_type(::Type{T1}, ::Type{T2}) where {T1, T2} = throw(ArgumentError(
     "    StencilCore._jacobian_type(::Type{$T1}, ::Type{$T2}) = <Jacobian type>"))
 
 # Dispatch every entry on Vararg{AbstractScalar} so StencilCalculus can add its
-# disjoint Vararg{AbstractTerm} methods to the same generic.
+# disjoint Vararg{AbstractPointwise} methods to the same generic.
 derivative(::typeof(+), ::Val,    args::Vararg{AbstractScalar}) = _unity(_joined_eltype(args))
 derivative(::typeof(-), ::Val{1}, x::AbstractScalar)            = Scalar(-, (_unity(eltype(x)),))
 derivative(::typeof(-), ::Val{1}, x::AbstractScalar, y::AbstractScalar) = _unity(_joined_eltype((x, y)))
@@ -134,10 +137,10 @@ derivative(f, ::Val, args::Vararg{AbstractScalar}) =
 # `J`-shape) or it does not (derivative = `Null{J}`). Under Q1=(c), all
 # leaf-level Jacobians collapse to the *outer* Jacobian eltype `J` threaded
 # through the recursion.
-_diff_scalar(::Constant, v::Symbolic, J::Type) = Null{J}()
-_diff_scalar(::Unity,    v::Symbolic, J::Type) = Null{J}()
-_diff_scalar(::Null,     v::Symbolic, J::Type) = Null{J}()
-_diff_scalar(s::Symbolic{S2}, v::Symbolic{S}, J::Type) where {S2, S} =
+_diff_scalar(::Constant, v::Var, J::Type) = Null{J}()
+_diff_scalar(::Unity,    v::Var, J::Type) = Null{J}()
+_diff_scalar(::Null,     v::Var, J::Type) = Null{J}()
+_diff_scalar(s::Var{S2}, v::Var{S}, J::Type) where {S2, S} =
     S2 === S ? _unity(eltype(v)) : Null{J}()
 
 # --- Chain rule on Scalar interior nodes -----------------------------------
@@ -149,7 +152,7 @@ _diff_scalar(s::Symbolic{S2}, v::Symbolic{S}, J::Type) where {S2, S} =
 # Q3=(A): for `*` with arg-index 1, swap to `sub * dfn` (left-multiply) — the
 # correct order for non-commutative multiplication. Commutative cases
 # (Number×Number, Number×SArray) are unaffected.
-function _diff_scalar(s::Scalar, v::Symbolic, J::Type)
+function _diff_scalar(s::Scalar, v::Var, J::Type)
     out = nothing
     for (i, arg) in enumerate(s.args)
         sub = _diff_scalar(arg, v, J)
@@ -168,7 +171,7 @@ end
 # --- Public entry point ----------------------------------------------------
 
 """
-    differentiate(s::AbstractScalar, v::Symbolic{S}) -> AbstractScalar
+    differentiate(s::AbstractScalar, v::Var{S}) -> AbstractScalar
 
 Differentiate `s` with respect to the named scalar parameter `v` (matched on
 the symbol only). The result is an `AbstractScalar` whose `eltype` is the
@@ -179,7 +182,7 @@ throw. Returns `Null{J}()` when `s` does not depend on `v`; otherwise the
 chain-rule expression, simplified. Scalar-side analogue of
 [`StencilCalculus.differentiate`](@ref).
 """
-function differentiate(s::AbstractScalar, v::Symbolic)
+function differentiate(s::AbstractScalar, v::Var)
     J = _jacobian_type(eltype(s), eltype(v))
     _diff_scalar(simplify(s), v, J)
 end

@@ -18,13 +18,13 @@ include("general.jl")
 export AccessStyle, ColumnAccess, RowAccess, AbstractStencil
 
 # Term-like supertype shared by arrays and symbolic terms.
-export AbstractTerm, ArrayOrTermLike
+export AbstractPointwise, ArrayOrTermLike
 
 # Scalar algebra: abstract supertype + concrete leaves and tree node.
-export AbstractScalar, Symbolic, Constant, Null, Unity, Scalar
-export @symbolic
+export AbstractScalar, Var, Constant, Null, Unity, Scalar, IntLike
+export @var
 
-# CAS operations whose generic Calculus extends with AbstractTerm methods.
+# CAS operations whose generic Calculus extends with AbstractPointwise methods.
 export simplify, materialize, differentiate, derivative, @scalar_rule
 
 # Type-level offsets.
