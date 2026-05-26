@@ -34,13 +34,23 @@ Each call expands to one or more `derivative(::typeof(f), ::Val{i}, ...) = ...`
 methods. Existing hand-written methods are equivalent and interoperate with this
 macro.
 """
-macro scalar_rule(call, rhs)
+macro scalar_rule(assignment)
+    # `@scalar_rule f(args...) = expr` is parsed by Julia as a single
+    # assignment expression Expr(:(=), :(f(args...)), :expr).
+    assignment isa Expr && assignment.head === :(=) ||
+        throw(ArgumentError("@scalar_rule: expected `f(args...) = expr`, got `$assignment`"))
+    call = assignment.args[1]
+    rhs  = assignment.args[2]
     # Parse `f(args...)` from the LHS call expression.
     call isa Expr && call.head === :call ||
         throw(ArgumentError("@scalar_rule: expected a function call on the left, got `$call`"))
     f    = call.args[1]
     args = call.args[2:end]
     nargs = length(args)
+
+    # Unwrap the LineNumberNode-padded :block Julia adds around the RHS of `=`.
+    rhs = Meta.isexpr(rhs, :block) ?
+        last(filter(!Base.Fix2(isa, LineNumberNode), rhs.args)) : rhs
 
     # RHS: either a single expr (unary) or a tuple (one element per argument).
     exprs = if rhs isa Expr && rhs.head === :tuple
