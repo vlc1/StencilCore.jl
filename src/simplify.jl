@@ -64,9 +64,9 @@ rule_multiplicative_identity(::AbstractScalar) = nothing
 function rule_multiplicative_identity(s::Scalar)
     f, a = s.fn, s.args
     if f === (*) && length(a) == 2
-        (a[1] isa Null || a[2] isa Null) && return Null{eltype(s)}()
+        (a[1] isa Null || a[2] isa Null) && return Null{_to_bool_shape(eltype(s))}()
         if a[1] isa Unity
-            a[2] isa Unity && return Unity{eltype(s)}()        # I * I = I
+            a[2] isa Unity && return Unity{_to_bool_shape(_unity_space(eltype(s)))}()        # I * I = I
             (eltype(s) === eltype(a[2]) || _left_unity_shape(eltype(a[2]), eltype(a[1]))) &&
                 return a[2]
         elseif a[2] isa Unity
@@ -75,11 +75,11 @@ function rule_multiplicative_identity(s::Scalar)
         end
     elseif f === (/) && length(a) == 2
         if a[2] isa Unity
-            a[1] isa Unity && return Unity{eltype(s)}()        # I / I = I
+            a[1] isa Unity && return Unity{_to_bool_shape(_unity_space(eltype(s)))}()        # I / I = I
             (eltype(s) === eltype(a[1]) || _right_unity_shape(eltype(a[1]), eltype(a[2]))) &&
                 return a[1]
         end
-        a[1] isa Null && return Null{eltype(s)}()
+        a[1] isa Null && return Null{_to_bool_shape(eltype(s))}()
     end
     return nothing
 end

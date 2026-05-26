@@ -100,22 +100,34 @@ design lives in [`docs/cas.md`](../StencilCalculus/docs/cas.md).
       like `SVector` — this is the carrier numeric literals canonicalise to
       at the operator boundary).
     - **`Null{T}`** — structural additive zero, dispatch-matched. Displays as `"0"`.
+      **`T` is always `Bool`-shaped** (`T === Bool` for scalar-valued expressions;
+      `eltype(T) === Bool` for array-shaped ones). Analogous to
+      `LinearAlgebra.UniformScaling{Bool}`: shape is preserved, numeric precision
+      is determined at materialisation time via Julia promotion.
+      `materialize(Null{Bool}()) === false`; `materialize(Null{SVector{N,Bool}}())`
+      materialises to `SVector{N,Bool}(zero...)`. Outer ctors `Null(T)` / `Null(x)`
+      call `_to_bool_shape(T)` to enforce the invariant; direct `Null{Float64}()`
+      throws `ArgumentError`. **`_to_bool_shape`**: `Number → Bool`;
+      `StaticArray{S,T,N} → similar_type(S, Bool)`.
     - **`Unity{T}`** — structural multiplicative one, dispatch-matched. Displays
-      as `"U"`. Construction requires `one(T)` defined (`Number`, square
-      `SMatrix`, …). Outer ctor `Unity(T)` routes through `_unity_space` so
-      `Unity(SVector{N, F}) === Unity{SMatrix{N, N, F}}()`. Display of binary
-      `*` involving `Unity` is context-sensitive: `Constant{<:Number} * Unity`
-      renders as numeric juxtaposition (`"2U"`); all other `* Unity` or
-      `Unity *` cases render with explicit `*` but no outer parens
-      (`"τ * U"`, `"U * τ"`).
+      as `"U"`. **`T` is always `Bool`-shaped** (same invariant as `Null`).
+      Construction additionally requires `one(T)` defined (`Bool`, square
+      `SMatrix{N,N,Bool}`, …). Outer ctor `Unity(T)` routes through
+      `_to_bool_shape(_unity_space(T))` so `Unity(SVector{N, F})` →
+      `Unity{SMatrix{N, N, Bool}}()`. `materialize(Unity{Bool}()) === true`.
+      Display of binary `*` involving `Unity` is context-sensitive:
+      `Constant{<:Number} * Unity` renders as numeric juxtaposition (`"2U"`);
+      all other `* Unity` or `Unity *` cases render with explicit `*` but no
+      outer parens (`"τ * U"`, `"U * τ"`).
     - **`Scalar{F, A<:Tuple{Vararg{AbstractScalar}}, T}`** — interior node
       `fn(args…)`; `T = Base.promote_op(fn, eltype.(args)…)` computed at
       construction (a `Union{}` result throws). Named `Scalar` to mirror the
       convention: the interior node of `AbstractX` is named `X` (cf.
       `AbstractPointwise` → `Pointwise`).
 
-    All concrete `T`s are enforced via `_assert_concrete`. The `@var name [T]`
-    macro binds `name = Var{:name, T}()` (default `T = Float64`).
+    All concrete `T`s are enforced via `_assert_concrete`; for `Null` and `Unity`
+    the additional `_assert_bool_shape` guard enforces the Bool-shape invariant.
+    The `@var name [T]` macro binds `name = Var{:name, T}()` (default `T = Float64`).
 
 13. **Operator boundary canonicalises to `Constant`.** Every binary op
     `(::AbstractScalar, x)` with `x` not an `AbstractScalar` lifts as

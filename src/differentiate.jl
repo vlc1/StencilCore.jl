@@ -137,11 +137,11 @@ derivative(f, ::Val, args::Vararg{AbstractScalar}) =
 # `J`-shape) or it does not (derivative = `Null{J}`). Under Q1=(c), all
 # leaf-level Jacobians collapse to the *outer* Jacobian eltype `J` threaded
 # through the recursion.
-_diff_scalar(::Constant, v::Var, J::Type) = Null{J}()
-_diff_scalar(::Unity,    v::Var, J::Type) = Null{J}()
-_diff_scalar(::Null,     v::Var, J::Type) = Null{J}()
+_diff_scalar(::Constant, v::Var, J::Type) = Null{_to_bool_shape(J)}()
+_diff_scalar(::Unity,    v::Var, J::Type) = Null{_to_bool_shape(J)}()
+_diff_scalar(::Null,     v::Var, J::Type) = Null{_to_bool_shape(J)}()
 _diff_scalar(s::Var{S2}, v::Var{S}, J::Type) where {S2, S} =
-    S2 === S ? _unity(eltype(v)) : Null{J}()
+    S2 === S ? _unity(eltype(v)) : Null{_to_bool_shape(J)}()
 
 # --- Chain rule on Scalar interior nodes -----------------------------------
 
@@ -165,7 +165,7 @@ function _diff_scalar(s::Scalar, v::Var, J::Type)
         end
         out = (out === nothing) ? contrib : simplify(Scalar(+, (out, contrib)))
     end
-    return out === nothing ? Null{J}() : out
+    return out === nothing ? Null{_to_bool_shape(J)}() : out
 end
 
 # --- Public entry point ----------------------------------------------------

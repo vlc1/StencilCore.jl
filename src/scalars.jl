@@ -52,6 +52,20 @@ Var{S}() where {S} = Var{S, Float64}()
 # same-type T returns T (e.g. SMatrix is its own identity space).
 _unity_space(::Type{T}) where {T} = _jacobian_type(T, T)
 
+# Map any concrete type to its Bool-shaped counterpart: scalar Number → Bool;
+# SArray{S,T,N,L} → SArray{S,Bool,N,L}. Used by Null/Unity outer ctors.
+_to_bool_shape(::Type{T}) where {T <: Number}       = Bool
+_to_bool_shape(::Type{T}) where {T <: StaticArray}  = similar_type(T, Bool)
+
+# Inner-constructor guard: T must be concrete *and* Bool-shaped.
+@inline function _assert_bool_shape(name::Symbol, ::Type{T}) where {T}
+    _assert_concrete(name, T)
+    (T === Bool || (T <: AbstractArray && eltype(T) === Bool)) ||
+        throw(ArgumentError(
+            "$(name) requires a Bool-shaped type (Bool or AbstractArray{Bool}); " *
+            "got T=$(T). Use e.g. Null(x) or Null(typeof(x)) to construct correctly."))
+end
+
 """
     Constant{T}(val) / Constant(val)
 
@@ -76,10 +90,10 @@ the scalar-side analogue of [`AbstractPointwise`](@ref) `Zero`. Materializes to
 dispatch.
 """
 struct Null{T} <: AbstractScalar{T}
-    Null{T}() where {T} = (_assert_concrete(:Null, T); new{T}())
+    Null{T}() where {T} = (_assert_bool_shape(:Null, T); new{T}())
 end
-Null(T::Type)       = Null{T}()
-Null(::T) where {T} = Null{T}()
+Null(T::Type)       = Null{_to_bool_shape(T)}()
+Null(::T) where {T} = Null{_to_bool_shape(T)}()
 
 """
     Unity{T}()
@@ -95,14 +109,14 @@ collapses additive identities.
 """
 struct Unity{T} <: AbstractScalar{T}
     function Unity{T}() where {T}
-        _assert_concrete(:Unity, T)
+        _assert_bool_shape(:Unity, T)
         applicable(one, T) || throw(ArgumentError(
             "Unity{T} requires `one(T)` to be defined (a square-scalar shape); got T=$T"))
         new{T}()
     end
 end
-Unity(::Type{T}) where {T} = Unity{_unity_space(T)}()
-Unity(::T) where {T}       = Unity{_unity_space(T)}()
+Unity(::Type{T}) where {T} = Unity{_to_bool_shape(_unity_space(T))}()
+Unity(::T) where {T}       = Unity{_to_bool_shape(_unity_space(T))}()
 
 """
     Scalar(fn, args::Tuple{Vararg{AbstractScalar}})

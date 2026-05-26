@@ -182,29 +182,32 @@ StencilCore._interlace(::NTuple{M, _DummyTerm}) where {M} = _DummyTerm{SVector{M
         @test_throws ArgumentError Constant{Real}(1)              # T must be concrete
 
         # Unity: structural multiplicative one; inner ctor's `T` must admit
-        # `one(T)`; outer ctors route through `_unity_space` so a value-space
-        # type (Number, SVector) lands in its identity space.
-        @test Unity{Float64}() isa AbstractScalar{Float64}
-        @test eltype(Unity{Float64}()) === Float64
-        @test Unity(Float64) === Unity{Float64}()
-        @test Unity(3.14) === Unity{Float64}()
-        @test Unity{SMatrix{2, 2, Float64, 4}}() isa Unity                 # square SMatrix OK
-        # Outer ctor on SVector remaps to the square SMatrix identity space.
-        @test Unity(SVector{2, Float64}) === Unity{SMatrix{2, 2, Float64, 4}}()
-        @test Unity(SVector(1.0, 2.0))   === Unity{SMatrix{2, 2, Float64, 4}}()
+        # `one(T)` AND be Bool-shaped; outer ctors route through `_unity_space`
+        # so a value-space type (Number, SVector) lands in its Bool-shaped
+        # identity space.
+        @test Unity{Bool}() isa AbstractScalar{Bool}
+        @test eltype(Unity{Bool}()) === Bool
+        @test Unity(Float64) === Unity{Bool}()
+        @test Unity(3.14) === Unity{Bool}()
+        @test Unity{SMatrix{2, 2, Bool, 4}}() isa Unity                    # square SMatrix OK
+        # Outer ctor on SVector remaps to the square SMatrix Bool identity space.
+        @test Unity(SVector{2, Float64}) === Unity{SMatrix{2, 2, Bool, 4}}()
+        @test Unity(SVector(1.0, 2.0))   === Unity{SMatrix{2, 2, Bool, 4}}()
         # Inner ctor on SVector still rejects (no `one(SVector)`).
         @test_throws ArgumentError Unity{SVector{2, Float64}}()
         @test_throws ArgumentError Unity{Integer}()                        # T must be concrete
+        @test_throws ArgumentError Unity{Float64}()                        # violates Bool invariant
 
-        # Null: type and value ctors.
-        @test eltype(Null{Float64}()) === Float64
-        @test Null(Float64) === Null{Float64}()
-        @test Null(3.14) === Null{Float64}()
-        @test Null(7) === Null{Int}()
+        # Null: type and value ctors always produce Bool-shaped result.
+        @test eltype(Null{Bool}()) === Bool
+        @test Null(Float64) === Null{Bool}()
+        @test Null(3.14) === Null{Bool}()
+        @test Null(7) === Null{Bool}()
 
-        # T must be concrete.
+        # T must be concrete; non-Bool T is rejected.
         @test_throws ArgumentError Var{:s, Real}()
         @test_throws ArgumentError Null{Integer}()
+        @test_throws ArgumentError Null{Float64}()                         # violates Bool invariant
     end
 
     @testset "@var macro" begin
@@ -245,9 +248,9 @@ StencilCore._interlace(::NTuple{M, _DummyTerm}) where {M} = _DummyTerm{SVector{M
         @test repr(τ) == "τ"
         @test repr(Constant(2.0)) == "2.0"
         @test repr(Constant(3)) == "3"
-        @test repr(Null{Float64}()) == "0"             # type-agnostic glyph
-        @test repr(Unity{Float64}()) == "U"            # type-agnostic glyph
-        let J = SMatrix{2, 2, Float64, 4}
+        @test repr(Null{Bool}()) == "0"             # type-agnostic glyph
+        @test repr(Unity{Bool}()) == "U"            # type-agnostic glyph
+        let J = SMatrix{2, 2, Bool, 4}
             @test repr(Constant(2) * Unity{J}()) == "2U"      # numeric juxtaposition
             @test repr(τ * Unity{J}()) == "τ * U"             # symbolic: explicit *, no parens
             @test repr(Unity{J}() * τ) == "U * τ"             # Unity on left
@@ -259,8 +262,8 @@ StencilCore._interlace(::NTuple{M, _DummyTerm}) where {M} = _DummyTerm{SVector{M
 
     @testset "AbstractScalar simplify" begin
         τ = Var{:τ, Float64}()
-        N = Null{Float64}()
-        U = Unity{Float64}()                   # the structural multiplicative one
+        N = Null{Bool}()
+        U = Unity{Bool}()                   # the structural multiplicative one
         simp = StencilCore.simplify
 
         # Leaves are already normal form.
@@ -309,9 +312,9 @@ StencilCore._interlace(::NTuple{M, _DummyTerm}) where {M} = _DummyTerm{SVector{M
         @test mat(Constant(3)) === 3
         @test mat(Constant(SVector(1, 2))) === SVector(1, 2)
         @test mat(τ, (τ = 7.0,)) === 7.0
-        @test mat(Null{Float64}()) === 0.0
-        @test mat(Unity{Float64}()) === 1.0
-        @test mat(Unity{SMatrix{2, 2, Float64, 4}}()) === SMatrix{2, 2, Float64}(1, 0, 0, 1)
+        @test mat(Null{Bool}()) === false
+        @test mat(Unity{Bool}()) === true
+        @test mat(Unity{SMatrix{2, 2, Bool, 4}}()) === one(SMatrix{2, 2, Bool, 4})
 
         # Scalar tree.
         @test mat(τ * Constant(3.0), (τ = 4.0,)) === 12.0
@@ -329,14 +332,14 @@ StencilCore._interlace(::NTuple{M, _DummyTerm}) where {M} = _DummyTerm{SVector{M
         τ = Var{:τ, Float64}(); α = Constant(2.0)
         η = Var{:η, Float64}()
         diff = StencilCore.differentiate
-        U = Unity{Float64}()
+        U = Unity{Bool}()
 
         # Leaves.
         @test diff(τ, τ) === U
-        @test diff(Constant(2.0), τ) === Null{Float64}()
-        @test diff(η, τ) === Null{Float64}()
-        @test diff(Null{Float64}(), τ) === Null{Float64}()
-        @test diff(Unity{Float64}(), τ) === Null{Float64}()
+        @test diff(Constant(2.0), τ) === Null{Bool}()
+        @test diff(η, τ) === Null{Bool}()
+        @test diff(Null{Bool}(), τ) === Null{Bool}()
+        @test diff(Unity{Bool}(), τ) === Null{Bool}()
 
         # Sum rule: ∂(τ + α)/∂τ = 1.
         @test diff(τ + α, τ) === U
@@ -351,12 +354,12 @@ StencilCore._interlace(::NTuple{M, _DummyTerm}) where {M} = _DummyTerm{SVector{M
         # ∂exp(τ)/∂τ = exp(τ).
         @test diff(exp(τ), τ) == Scalar(exp, (τ,))
 
-        # No dependence ⇒ Null with the right eltype.
-        @test diff(α + η, τ) === Null{Float64}()
+        # No dependence ⇒ Null{Bool} (Bool-shaped, precision resolved by promotion).
+        @test diff(α + η, τ) === Null{Bool}()
 
-        # Mixed-eltype: promote across both operands.
-        @test diff(Constant(2), τ) === Null{Float64}()          # Int leaf, Float64 variable
-        @test diff(Null{Int}(), τ) === Null{Float64}()
+        # Mixed-eltype: promote across both operands — result is still Null{Bool}.
+        @test diff(Constant(2), τ) === Null{Bool}()          # Int leaf, Float64 variable
+        @test diff(Null{Bool}(), τ) === Null{Bool}()
 
         # tan is now supported: ∂tan(τ)/∂τ = 1 + tan(τ)².
         @test diff(sin(τ), τ) == Scalar(cos, (τ,))              # already tested above; confirm consistency
@@ -380,28 +383,28 @@ StencilCore._interlace(::NTuple{M, _DummyTerm}) where {M} = _DummyTerm{SVector{M
 
         # ∂(2x)/∂x: the product rule returns Constant(2) * Unity{J}(). The
         # fold does not fire for non-Number eltypes, so the result stays as a
-        # Scalar tree. Materialization equals 2I.
-        let J = SMatrix{2, 2, Float64, 4}
+        # Scalar tree. Materialization equals 2I (as SMatrix{Int}).
+        let J = SMatrix{2, 2, Bool, 4}
             d = diff(2x, x)
             @test d == Scalar(*, (Constant(2), Unity{J}()))
-            @test mat(d) === J(2.0, 0.0, 0.0, 2.0)
+            @test mat(d) === SMatrix{2, 2, Int, 4}(2, 0, 0, 2)
         end
 
         # Self-derivative of an SVector symbol is the structural Unity in the
-        # Jacobian (square SMatrix) shape.
-        let J = SMatrix{3, 3, Float32, 9}
+        # Jacobian (square SMatrix Bool) shape.
+        let J = SMatrix{3, 3, Bool, 9}
             x3 = Var{:x3, SVector{3, Float32}}()
             @test diff(x3, x3) === Unity{J}()
-            @test mat(diff(x3, x3)) === J(1, 0, 0, 0, 1, 0, 0, 0, 1)
+            @test mat(diff(x3, x3)) === one(J)
         end
 
-        # Sum rule across vector terms: ∂(2x + 3x)/∂x materializes to 5I.
-        let J = SMatrix{2, 2, Float64, 4}
-            @test mat(diff(2x + 3x, x)) === J(5.0, 0.0, 0.0, 5.0)
+        # Sum rule across vector terms: ∂(2x + 3x)/∂x materializes to 5I (Int).
+        let J = SMatrix{2, 2, Int, 4}
+            @test mat(diff(2x + 3x, x)) === J(5, 0, 0, 5)
         end
 
-        # Independence: ∂y/∂x = Null{J}.
-        let J = SMatrix{2, 2, Float64, 4}
+        # Independence: ∂y/∂x = Null{Bool-J}.
+        let J = SMatrix{2, 2, Bool, 4}
             @test diff(y, x) === Null{J}()
             @test diff(Constant(SVector(1.0, 0.0)), x) === Null{J}()
         end
@@ -418,15 +421,15 @@ StencilCore._interlace(::NTuple{M, _DummyTerm}) where {M} = _DummyTerm{SVector{M
     @testset "AbstractScalar simplify (shape-aware)" begin
         simp = StencilCore.simplify
         x = Var{:x, SVector{2, Float64}}()
-        J  = SMatrix{2, 2, Float64, 4}
+        J  = SMatrix{2, 2, Bool, 4}
 
         # Fold Path 1 restricted to Number eltypes: `Constant(Number) *
         # Unity{SMatrix}()` does NOT fold (non-Number result) — stays as Scalar.
         @test simp(Constant(2.0) * Unity{J}()) isa Scalar
         @test simp(Unity{J}() * Constant(2.0)) isa Scalar
 
-        # But Number × Number still folds:
-        @test simp(Constant(2.0) + Unity{Float64}()) === Constant{Float64}(3.0)
+        # But Number × Number still folds (Unity{Bool} acts as true):
+        @test simp(Constant(2.0) + Unity{Bool}()) === Constant{Float64}(3.0)
 
         # Fold Path 2 — direct fold over non-Number Constants (the user's
         # `v + SVector(1)` bug case).
@@ -472,9 +475,9 @@ StencilCore._interlace(::NTuple{M, _DummyTerm}) where {M} = _DummyTerm{SVector{M
         @test AbstractTrees.children(τ) === ()
         @test AbstractTrees.nodevalue(Constant(2.5)) === 2.5
         @test AbstractTrees.children(Constant(2.5)) === ()
-        @test AbstractTrees.nodevalue(Null{Float64}()) === 0.0
-        @test AbstractTrees.nodevalue(Unity{Float64}()) === 1.0
-        @test AbstractTrees.children(Unity{Float64}()) === ()
+        @test AbstractTrees.nodevalue(Null{Bool}()) === false
+        @test AbstractTrees.nodevalue(Unity{Bool}()) === true
+        @test AbstractTrees.children(Unity{Bool}()) === ()
         s = τ * Constant(2.0)
         @test AbstractTrees.nodevalue(s) === *
         @test AbstractTrees.children(s) === s.args
