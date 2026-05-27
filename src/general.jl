@@ -16,34 +16,58 @@ _shift_off(::StaticShift{Tuple{}}) = 0
 _shift_off(::StaticShift{Tuple{StaticPair{D, O}}}) where {D, O} = O
 
 """
-    Stencil{M, C<:NTuple{M,StaticShift}, A<:NTuple{M,ArrayOrTermLike}, S<:AccessStyle}
-        <: AbstractStencil{S}
+    Stencil{M, C<:NTuple{M,StaticShift}, A<:NTuple{M,ArrayOrTermLike}, T, S<:AccessStyle}
+        <: AbstractStencil{S, T}
 
 General offset-list stencil in **structure-of-arrays** form: `M` offsets
 `shifts` (reverse-lexicographically ordered) and a parallel `M`-tuple `terms`
 of per-offset coefficients (`terms[k]` is the coefficient at offset
 `shifts[k]`). Each coefficient is an `ArrayOrTermLike` — a concrete array or a
-symbolic term — with a *scalar* element type.
+symbolic term — with a *scalar* element type, and all coefficients must share
+the same `eltype === T`.
 
 The form produced by symbolic differentiation; **not assembled directly** —
 narrowed to a `LinearStencil` / `StarStencil` via [`as_linear`](@ref) /
 [`as_star`](@ref), which is where the layout switches to array-of-structs (one
 `SVector{M}`-valued coefficient) by `_interlace`ing `terms`.
 """
-struct Stencil{M, C<:NTuple{M, StaticShift}, A<:NTuple{M, ArrayOrTermLike}, S<:AccessStyle} <: AbstractStencil{S}
+struct Stencil{M, C<:NTuple{M, StaticShift}, A<:NTuple{M, ArrayOrTermLike}, T, S<:AccessStyle} <: AbstractStencil{S, T}
     shifts::C
     terms::A
 
-    # Access style via a positional Type tag (S is the trailing type param).
+    # Access style via a positional Type tag (S is the trailing type param;
+    # T is the common coefficient eltype, second-to-last).
     function Stencil(
         ::Type{S},
         shifts::NTuple{M, StaticShift},
         terms::NTuple{M, ArrayOrTermLike},
     ) where {S<:AccessStyle, M}
         M >= 1 || throw(ArgumentError("Stencil needs at least one offset"))
-        new{M, typeof(shifts), typeof(terms), S}(shifts, terms)
+        # Wildcards (Fill-wrapped Null/Unity) materialize to `zero(T)`/`one(T)`
+        # of any surrounding T via promotion (the Bool-shape discipline); they
+        # do not fix T. Derive T from the non-wildcard coefficients.
+        ix = findfirst(!_is_eltype_wildcard, terms)
+        ix === nothing && throw(ArgumentError(
+            "Stencil cannot derive a coefficient eltype: every coefficient " *
+            "is a structural Null/Unity wildcard. Include at least one " *
+            "non-wildcard coefficient so T can be pinned."))
+        T = eltype(terms[ix])
+        for (k, t) in enumerate(terms)
+            _is_eltype_wildcard(t) && continue
+            eltype(t) === T || throw(ArgumentError(
+                "Stencil coefficients must share eltype; derived T = $(T) " *
+                "(from terms[$(ix)]) but terms[$(k)] has eltype $(eltype(t))"))
+        end
+        new{M, typeof(shifts), typeof(terms), T, S}(shifts, terms)
     end
 end
+
+# Trait: a coefficient that materializes to `zero(T)`/`one(T)` of any
+# surrounding T via promotion, and therefore does not pin a Stencil's
+# coefficient eltype. Default `false`; StencilCalculus overrides for
+# `Fill{<:Null}` (a.k.a. `Zero`) and `Fill{<:Unity}` to carry the existing
+# Bool-shape discipline through to the Stencil eltype-uniformity check.
+_is_eltype_wildcard(_) = false
 
 # Default outer constructor: ColumnAccess.
 Stencil(shifts, terms) = Stencil(ColumnAccess, shifts, terms)
@@ -84,7 +108,7 @@ to the equivalent `LinearStencil{D}`, interlacing `terms` into the single
 `SVector{D}`-valued coefficient. Throws if the offsets are multi-axis, span
 several axes, or are not contiguous-ascending.
 """
-function as_linear(st::Stencil{M, C, A, S}) where {M, C, A, S}
+function as_linear(st::Stencil{M, C, A, T, S}) where {M, C, A, T, S}
     shifts = st.shifts
     all(s -> _naxes(s) <= 1, shifts) || throw(ArgumentError(
         "Stencil offsets are not single-axis; cannot narrow to LinearStencil"))
@@ -133,7 +157,7 @@ Narrow a `Stencil` whose offsets form the canonical reverse-lex star pattern
 equivalent `StarStencil{L}`, interlacing `terms` into the single `SVector{M}`-
 valued coefficient. Throws otherwise.
 """
-function as_star(st::Stencil{M, C, A, S}) where {M, C, A, S}
+function as_star(st::Stencil{M, C, A, T, S}) where {M, C, A, T, S}
     shifts = st.shifts
     all(s -> _naxes(s) <= 1, shifts) || throw(ArgumentError(
         "Stencil offsets are not single-axis; cannot narrow to StarStencil"))

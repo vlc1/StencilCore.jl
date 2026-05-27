@@ -9,11 +9,16 @@ design lives in [`docs/cas.md`](../StencilCalculus/docs/cas.md).
 
 ## Sticky decisions
 
-1. **Access-style trait.** `AccessStyle` (abstract) with singletons
-   `ColumnAccess` (CSC) and `RowAccess` (CSR, reserved).
-   `AbstractStencil{S<:AccessStyle}` is the supertype; every stencil
-   carries `S` as its **last** type parameter. The accessor
-   `AccessStyle(st)` / `AccessStyle(::Type)` lives once at the supertype.
+1. **Access-style trait + coefficient eltype.** `AccessStyle` (abstract) with
+   singletons `ColumnAccess` (CSC) and `RowAccess` (CSR, reserved).
+   `AbstractStencil{S<:AccessStyle, T}` is the supertype; every stencil carries
+   `S` as its **last** type parameter and `T` (the coefficient element type, a.k.a.
+   the linear-map space) as the **second-to-last**. `T` mirrors `Unity{T}` from
+   scalar-land: it is the space whose elements multiply an `AbstractPointwise{U}`
+   field cell-wise, with the match rule `T === _unity_space(U)` (scalar-on-scalar
+   for `U <: Number`, `SMatrix{N, N, F}`-on-`SVector{N, F}` for vector-valued
+   fields). Accessors `AccessStyle(st)` and `Base.eltype(st) === T` live once at
+   the supertype.
 
 2. **`AbstractPointwise{T}` — array-like, dimension-/size-less.** `T` is the
    materialized element type (concrete or abstract): a pointwise expression
@@ -43,28 +48,36 @@ design lives in [`docs/cas.md`](../StencilCalculus/docs/cas.md).
    order). This single convention is shared by `Stencil`, `StarStencil`,
    and `LinearStencil` so narrowing is a verbatim coefficient copy.
 
-6. **`LinearStencil{D, O, L, E<:SVector{L}, A<:ArrayOrTermLike{E}, S}`.**
+6. **`LinearStencil{D, O, L, T, A<:ArrayOrTermLike{SVector{L, T}}, S}`.**
    Contiguous offsets along mesh dim `D`; `offsets::SUnitRange{O, L}`,
-   `term::A`. Coefficient element `E` is the per-cell `SVector{L}` of all
-   `L` per-offset coefficients in **ascending offset order** (`term[c][1]`
-   ↦ offset `O`); scalar = `eltype(E)`. Offsets are **diagonal indices**
-   `δ = col − row`. **`N` is not a parameter** — it is `ndims(A)` for a
-   concrete coefficient (checked `D ≤ N`), unknown for a symbolic one.
+   `term::A`. The per-cell coefficient is an `SVector{L, T}` of all `L`
+   per-offset coefficients in **ascending offset order** (`term[c][1]` ↦
+   offset `O`); the scalar coefficient eltype is `T`. Offsets are **diagonal
+   indices** `δ = col − row`. **`N` is not a parameter** — it is `ndims(A)`
+   for a concrete coefficient (checked `D ≤ N`), unknown for a symbolic one.
 
-7. **`StarStencil{L, N, M, E<:SVector{M}, A<:ArrayOrTermLike{E}, S}` —
+7. **`StarStencil{L, N, M, T, A<:ArrayOrTermLike{SVector{M, T}}, S}` —
    interlaced.** A single `term::A` whose per-cell element is the
-   `SVector{M}` of the **whole** star, `M = 2NL + 1`, in reverse-lex offset
+   `SVector{M, T}` of the **whole** star, `M = 2NL + 1`, in reverse-lex offset
    order with the **diagonal as the explicit middle slot** `(M+1)/2`. This
    replaces a per-axis decomposition: the diagonal is a free coefficient
    (Helmholtz `k²`, parabolic `∂ₜ`), not a sum of per-axis centers. `N` is
    kept and validated to equal `(M−1)/(2L)` (and `ndims(A)` when concrete).
    Per-axis offset `δ` along axis `d` lands at row coord `c_d − δ`.
 
-8. **`Stencil{M, C<:NTuple{M, StaticShift}, E<:SVector{M}, A<:ArrayOrTermLike{E}, S}`
+8. **`Stencil{M, C<:NTuple{M, StaticShift}, A<:NTuple{M, ArrayOrTermLike}, T, S}`
    — the general lingua franca.** An explicit reverse-lex `shifts::C` plus a
-   matching `SVector{M}`-valued `term::A`; the form `differentiate` emits.
-   **Not assembled directly** — narrowed via [`as_linear`](@ref) /
-   [`as_star`](@ref) (future `as_planar`).
+   parallel `M`-tuple `terms::A` of per-offset scalar-valued coefficients
+   (structure-of-arrays); the form `differentiate` emits. The inner ctor
+   enforces *strict eltype uniformity*: every non-wildcard coefficient must
+   have `eltype === T`. **Wildcards** are `_is_eltype_wildcard`-true
+   coefficients (StencilCalculus adds `Fill{<:Null}` and `Fill{<:Unity}`),
+   which materialize to `zero(T)`/`one(T)` of any surrounding `T` via
+   promotion (the Bool-shape discipline) and so do not pin `T`. **Not
+   assembled directly** — narrowed via [`as_linear`](@ref) /
+   [`as_star`](@ref) (future `as_planar`), which is also where the
+   structure-of-arrays `terms` switches to the array-of-structs
+   `SVector{M}`-valued single coefficient via `_interlace`.
 
 9. **Narrowing = pattern match + verbatim `term` copy.** Because all three
    stencils share the reverse-lex layout, `as_linear` (offsets single-axis,

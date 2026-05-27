@@ -4,7 +4,7 @@ using AbstractTrees
 using StaticArrays: SUnitRange, SVector, SMatrix
 
 # Structs must be defined at top level (not inside @testset scopes).
-struct _DummyStencil{S} <: AbstractStencil{S} end
+struct _DummyStencil{S} <: AbstractStencil{S, Nothing} end
 struct _DummyTerm{T} <: AbstractPointwise{T} end
 
 # Symbolic half of the SoA→AoS coefficient combiner (the CAS provides the real
@@ -80,8 +80,9 @@ StencilCore._interlace(::NTuple{M, _DummyTerm}) where {M} = _DummyTerm{SVector{M
         # Concrete-array coefficient (array-of-structs).
         arr = fill(SVector(-1.0, 1.0), 5)
         st = LinearStencil{1}(SUnitRange(0, 1), arr)
-        @test st isa LinearStencil{1, 0, 2, SVector{2, Float64}, typeof(arr), ColumnAccess}
-        @test st isa AbstractStencil{ColumnAccess}
+        @test st isa LinearStencil{1, 0, 2, Float64, typeof(arr), ColumnAccess}
+        @test st isa AbstractStencil{ColumnAccess, Float64}
+        @test eltype(st) === Float64
         @test AccessStyle(st) === ColumnAccess()
         @test st.term === arr
 
@@ -92,7 +93,7 @@ StencilCore._interlace(::NTuple{M, _DummyTerm}) where {M} = _DummyTerm{SVector{M
         # Symbolic-term coefficient (no grid rank, no D ≤ N check).
         sym = _DummyTerm{SVector{2, Float64}}()
         sst = LinearStencil{2}(SUnitRange(0, 1), sym)
-        @test sst isa LinearStencil{2, 0, 2, SVector{2, Float64}, typeof(sym), ColumnAccess}
+        @test sst isa LinearStencil{2, 0, 2, Float64, typeof(sym), ColumnAccess}
         @test sst.term === sym
 
         # D ≤ N enforced for concrete arrays (2-D stencil dim on a 1-D coef array).
@@ -107,19 +108,20 @@ StencilCore._interlace(::NTuple{M, _DummyTerm}) where {M} = _DummyTerm{SVector{M
         # 2-D L=1: M = 2NL+1 = 5; single SVector{5} per cell, diagonal mid-slot.
         arr = fill(SVector(-1.0, -1.0, 4.0, -1.0, -1.0), 5, 4)
         st = StarStencil{1}(arr)
-        @test st isa StarStencil{1, 2, 5, SVector{5, Float64}, typeof(arr), ColumnAccess}
+        @test st isa StarStencil{1, 2, 5, Float64, typeof(arr), ColumnAccess}
+        @test eltype(st) === Float64
         @test AccessStyle(st) === ColumnAccess()
         @test st.term === arr
 
         # 3-D L=2: M = 2*3*2+1 = 13.
         arr3 = fill(SVector(ntuple(_ -> 1.0, 13)...), 4, 5, 6)
         st3 = StarStencil{2}(arr3)
-        @test st3 isa StarStencil{2, 3, 13, SVector{13, Float64}, typeof(arr3), ColumnAccess}
+        @test st3 isa StarStencil{2, 3, 13, Float64, typeof(arr3), ColumnAccess}
 
         # Symbolic coefficient: grid rank derived from (L, M).
         sym = _DummyTerm{SVector{5, Float64}}()
         sst = StarStencil{1}(sym)
-        @test sst isa StarStencil{1, 2, 5, SVector{5, Float64}, typeof(sym), ColumnAccess}
+        @test sst isa StarStencil{1, 2, 5, Float64, typeof(sym), ColumnAccess}
 
         # ndims must equal (M-1)/(2L): SVector{5} (N=2) on a 3-D array.
         @test_throws ArgumentError StarStencil{1}(fill(SVector(-1.0, -1.0, 4.0, -1.0, -1.0), 3, 4, 5))
@@ -135,11 +137,12 @@ StencilCore._interlace(::NTuple{M, _DummyTerm}) where {M} = _DummyTerm{SVector{M
         shifts = (-2ê₁, -ê₁, ô)
         terms = (fill(1.0, 5), fill(-4.0, 5), fill(3.0, 5))
         st = Stencil(RowAccess, shifts, terms)
-        @test st isa Stencil{3, typeof(shifts), typeof(terms), RowAccess}
+        @test st isa Stencil{3, typeof(shifts), typeof(terms), Float64, RowAccess}
+        @test eltype(st) === Float64
         @test AccessStyle(st) === RowAccess()
         @test st.terms === terms
         ln = as_linear(st)
-        @test ln isa LinearStencil{1, -2, 3, SVector{3, Float64}, <:Any, RowAccess}
+        @test ln isa LinearStencil{1, -2, 3, Float64, <:Any, RowAccess}
         @test ln.offsets == SUnitRange(-2, 0)
         # narrowing interlaces SoA → AoS: an SVector{3} per cell
         @test ln.term == fill(SVector(1.0, -4.0, 3.0), 5)
@@ -147,14 +150,14 @@ StencilCore._interlace(::NTuple{M, _DummyTerm}) where {M} = _DummyTerm{SVector{M
         # Symbolic coefficients narrow too (via the _interlace extension point).
         syms = ntuple(_ -> _DummyTerm{Float64}(), 3)
         lns = as_linear(Stencil(ColumnAccess, shifts, syms))
-        @test lns isa LinearStencil{1, -2, 3, SVector{3, Float64}, _DummyTerm{SVector{3, Float64}}, ColumnAccess}
+        @test lns isa LinearStencil{1, -2, 3, Float64, _DummyTerm{SVector{3, Float64}}, ColumnAccess}
 
         # Star pattern: 2-D L=1, reverse-lex (-ê₂, -ê₁, ô, ê₁, ê₂), M=5.
         sshifts = (-ê₂, -ê₁, ô, ê₁, ê₂)
         sterms = ntuple(i -> fill(Float64(i), 5, 4), 5)
         sst = Stencil(ColumnAccess, sshifts, sterms)
         ss = as_star(sst)
-        @test ss isa StarStencil{1, 2, 5, SVector{5, Float64}, <:Any, ColumnAccess}
+        @test ss isa StarStencil{1, 2, 5, Float64, <:Any, ColumnAccess}
         @test ss.term == fill(SVector(1.0, 2.0, 3.0, 4.0, 5.0), 5, 4)
 
         # Rejections.

@@ -42,16 +42,28 @@ compressed-sparse-row backend. See [`AccessStyle`](@ref).
 struct RowAccess    <: AccessStyle end
 
 """
-    AbstractStencil{S<:AccessStyle}
+    AbstractStencil{S<:AccessStyle, T}
 
 Abstract supertype for every stencil. Subtypes (`LinearStencil`,
-`StarStencil`, `Stencil`, …) carry the access style `S` as their
-**last** type parameter and declare `<: AbstractStencil{S}`.
+`StarStencil`, `Stencil`, …) carry the access style `S` as their **last**
+type parameter and the coefficient element type `T` as the **second-to-last**,
+and declare `<: AbstractStencil{S, T}`.
 
-Provides the [`AccessStyle`](@ref) trait accessor — subtypes inherit it
-without redefining.
+`T` is the *linear-map space* — the element type of the per-cell coefficient,
+mirroring how `Unity{T}` carries the multiplicative-identity space in
+scalar-land. For a `LinearStencil` / `StarStencil` whose coefficient stores
+`SVector{L, F}` per cell, `T === F` (not `SVector{L, F}`). The match rule for
+applying a stencil to an `AbstractPointwise{U}` (a future `*` overload) is
+`T === _unity_space(U)`: scalar-on-scalar for `U <: Number`,
+`SMatrix{N, N, F}`-on-`SVector{N, F}` for vector-valued fields.
+
+Provides the [`AccessStyle`](@ref) trait accessor and a `Base.eltype` accessor
+— subtypes inherit both without redefining.
 """
-abstract type AbstractStencil{S<:AccessStyle} end
+abstract type AbstractStencil{S<:AccessStyle, T} end
 
 AccessStyle(st::AbstractStencil) = AccessStyle(typeof(st))
-AccessStyle(::Type{<:AbstractStencil{S}}) where {S} = S()
+AccessStyle(::Type{<:AbstractStencil{S, T}}) where {S, T} = S()
+
+Base.eltype(::Type{<:AbstractStencil{S, T}}) where {S, T} = T
+Base.eltype(st::AbstractStencil) = eltype(typeof(st))

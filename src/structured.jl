@@ -6,35 +6,36 @@
 # methods constrained to concrete-array coefficients.
 
 """
-    LinearStencil{D, O, L, E<:SVector{L}, A<:ArrayOrTermLike{E}, S<:AccessStyle}
-        <: AbstractStencil{S}
+    LinearStencil{D, O, L, T, A<:ArrayOrTermLike{SVector{L, T}}, S<:AccessStyle}
+        <: AbstractStencil{S, T}
 
 Variable-coefficient stencil with **contiguous** offsets, aligned with mesh
 dimension `D`. Offsets are **diagonal indices**: for a column `j` and a row
 `i` the diagonal number is `k = j − i`. For column `c` at mesh position `p_c`
 and offset `δ`, the matrix entry lands on row `p_c − δ` with coefficient
 `term[p_c][δ − O + 1]` (column-anchored under `S = ColumnAccess`); each
-element `term[p_c]` is the `SVector{L}` of all `L` per-offset coefficients on
-that column in **ascending offset order** (`term[p_c][1]` ↦ offset `O`).
+element `term[p_c]` is the `SVector{L, T}` of all `L` per-offset coefficients
+on that column in **ascending offset order** (`term[p_c][1]` ↦ offset `O`).
 
 Type parameters:
 - `D`: mesh dim along which the stencil acts (`D ≥ 1`; for a concrete
   coefficient also `D ≤ ndims(term)`).
 - `O = δ_min`, `L = δ_max − δ_min + 1` — static via `SUnitRange`.
-- `E<:SVector{L}`: coefficient element type (the per-column `SVector`);
-  the scalar is `eltype(E)`.
-- `A<:ArrayOrTermLike{E}`: the coefficient container — a concrete
-  `AbstractArray{E}` (assemblable) or a symbolic `AbstractPointwise{E}`.
-  **`N` (grid rank) is not a stencil parameter**: it is `ndims(A)` for a
-  concrete coefficient, and unknown (resolved at `materialize`) for a
-  symbolic one.
+- `T`: scalar coefficient element type (the per-cell coefficient is
+  `SVector{L, T}`). This is the linear-map space surfaced as the second-to-
+  last parameter of [`AbstractStencil`](@ref).
+- `A<:ArrayOrTermLike{SVector{L, T}}`: the coefficient container — a concrete
+  `AbstractArray{SVector{L, T}}` (assemblable) or a symbolic
+  `AbstractPointwise{SVector{L, T}}`. **`N` (grid rank) is not a stencil
+  parameter**: it is `ndims(A)` for a concrete coefficient, and unknown
+  (resolved at `materialize`) for a symbolic one.
 - `S<:AccessStyle`: coefficient anchoring (`ColumnAccess` for CSC).
 
-The inner constructors bind `E = SVector{L, T}`; the default outer
-constructor defaults `S` to `ColumnAccess`. A catch-all reports
-`ArgumentError`s for non-`SUnitRange` offsets and ill-typed coefficients.
+The default outer constructor defaults `S` to `ColumnAccess`. A catch-all
+reports `ArgumentError`s for non-`SUnitRange` offsets and ill-typed
+coefficients.
 """
-struct LinearStencil{D, O, L, E<:SVector{L}, A<:ArrayOrTermLike{E}, S<:AccessStyle} <: AbstractStencil{S}
+struct LinearStencil{D, O, L, T, A<:ArrayOrTermLike{SVector{L, T}}, S<:AccessStyle} <: AbstractStencil{S, T}
     offsets::SUnitRange{O, L}
     term::A
 
@@ -48,7 +49,7 @@ struct LinearStencil{D, O, L, E<:SVector{L}, A<:ArrayOrTermLike{E}, S<:AccessSty
             "stencil dimension D must be a positive Int (got $D)"))
         D <= N || throw(ArgumentError(
             "stencil dimension D=$D exceeds coef-array dimension N=$N"))
-        new{D, O, L, SVector{L, T}, typeof(term), S}(offsets, term)
+        new{D, O, L, T, typeof(term), S}(offsets, term)
     end
 
     # Symbolic-term coefficient: grid rank unknown ⇒ no D ≤ N check.
@@ -59,7 +60,7 @@ struct LinearStencil{D, O, L, E<:SVector{L}, A<:ArrayOrTermLike{E}, S<:AccessSty
     ) where {D, S<:AccessStyle, O, L, T}
         D isa Int && D >= 1 || throw(ArgumentError(
             "stencil dimension D must be a positive Int (got $D)"))
-        new{D, O, L, SVector{L, T}, typeof(term), S}(offsets, term)
+        new{D, O, L, T, typeof(term), S}(offsets, term)
     end
 end
 
@@ -105,12 +106,12 @@ function _star_dims(L, M::Int)
 end
 
 """
-    StarStencil{L, N, M, E<:SVector{M}, A<:ArrayOrTermLike{E}, S<:AccessStyle}
-        <: AbstractStencil{S}
+    StarStencil{L, N, M, T, A<:ArrayOrTermLike{SVector{M, T}}, S<:AccessStyle}
+        <: AbstractStencil{S, T}
 
 N-D variable-coefficient star-shaped stencil with symmetric reach `−L … +L`
 along every mesh dimension, stored **interlaced**: a single coefficient
-`term::A` whose element at each cell is the `SVector{M}` of the whole star,
+`term::A` whose element at each cell is the `SVector{M, T}` of the whole star,
 `M = 2NL + 1`. The entries are in **reverse-lexicographic offset order**
 (axis `N` most significant — the `CartesianIndex` order) with the diagonal
 as the explicit middle slot `(M+1)/2`. Unlike a per-axis decomposition, the
@@ -126,12 +127,14 @@ Type parameters:
 - `L ≥ 1` per-axis reach; `M = 2NL + 1` whole-star offset count.
 - `N` grid rank, kept explicit; checked to equal `(M-1)/(2L)` (and the
   coefficient array's `ndims`, when concrete).
-- `E<:SVector{M}` coefficient element type; scalar `eltype(E)`.
-- `A<:ArrayOrTermLike{E}`: the (single) coefficient container — concrete
-  array (assemblable) or symbolic term.
+- `T` scalar coefficient element type (the per-cell coefficient is
+  `SVector{M, T}`). The linear-map space surfaced as the second-to-last
+  parameter of [`AbstractStencil`](@ref).
+- `A<:ArrayOrTermLike{SVector{M, T}}`: the (single) coefficient container —
+  concrete array (assemblable) or symbolic term.
 - `S<:AccessStyle`.
 """
-struct StarStencil{L, N, M, E<:SVector{M}, A<:ArrayOrTermLike{E}, S<:AccessStyle} <: AbstractStencil{S}
+struct StarStencil{L, N, M, T, A<:ArrayOrTermLike{SVector{M, T}}, S<:AccessStyle} <: AbstractStencil{S, T}
     term::A
 
     # Concrete-array coefficient: grid rank N = ndims; cross-check M = 2NL+1.
@@ -143,7 +146,7 @@ struct StarStencil{L, N, M, E<:SVector{M}, A<:ArrayOrTermLike{E}, S<:AccessStyle
         Nd == N || throw(ArgumentError(
             "coefficient array ndims=$N must equal grid rank (M-1)/(2L)=$Nd " *
             "(M=$M, L=$L)"))
-        new{L, N, M, SVector{M, T}, typeof(term), S}(term)
+        new{L, N, M, T, typeof(term), S}(term)
     end
 
     # Symbolic-term coefficient: grid rank derived from (L, M).
@@ -152,7 +155,7 @@ struct StarStencil{L, N, M, E<:SVector{M}, A<:ArrayOrTermLike{E}, S<:AccessStyle
         term::AbstractPointwise{SVector{M, T}},
     ) where {L, S<:AccessStyle, M, T}
         N = _star_dims(L, M)
-        new{L, N, M, SVector{M, T}, typeof(term), S}(term)
+        new{L, N, M, T, typeof(term), S}(term)
     end
 end
 
