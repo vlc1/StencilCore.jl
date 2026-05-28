@@ -4,7 +4,7 @@ using AbstractTrees
 using StaticArrays: SUnitRange, SVector, SMatrix
 
 # Structs must be defined at top level (not inside @testset scopes).
-struct _DummyStencil{S} <: AbstractStencil{S, Nothing} end
+struct _DummyStencil{S} <: NeighborhoodStencil{Nothing, S} end
 struct _DummyTerm{T} <: AbstractPointwise{T} end
 
 # Symbolic half of the SoA→AoS coefficient combiner (the CAS provides the real
@@ -81,7 +81,8 @@ StencilCore._interlace(::NTuple{M, _DummyTerm}) where {M} = _DummyTerm{SVector{M
         arr = fill(SVector(-1.0, 1.0), 5)
         st = LinearStencil{1}(SUnitRange(0, 1), arr)
         @test st isa LinearStencil{1, 0, 2, Float64, typeof(arr), ColumnAccess}
-        @test st isa AbstractStencil{ColumnAccess, Float64}
+        @test st isa AbstractStencil{Float64}
+        @test st isa NeighborhoodStencil{Float64, ColumnAccess}
         @test eltype(st) === Float64
         @test AccessStyle(st) === ColumnAccess()
         @test st.term === arr

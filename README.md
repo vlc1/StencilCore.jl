@@ -21,9 +21,13 @@ StencilCore         stencil types: AccessStyle, AbstractStencil, AbstractTerm{T}
 
 ## What it provides
 
-- **`AccessStyle`** trait (`ColumnAccess` / `RowAccess`) + `AbstractStencil{S, T}` —
+- **`AccessStyle`** trait (`ColumnAccess` / `RowAccess`) and the
+  `AbstractStencil{T}` / `NeighborhoodStencil{T, S<:AccessStyle}` hierarchy —
   `T` is the coefficient eltype (the linear-map space, mirroring `Unity{T}` in
-  scalar-land); accessed via `Base.eltype(::AbstractStencil)`.
+  scalar-land), accessed via `Base.eltype(::AbstractStencil)`. The two abstract
+  children of `AbstractStencil` are `AbstractPointwise{T}` (diagonal stencils,
+  no offsets) and `NeighborhoodStencil{T, S}` (offset-bearing, carries an
+  `AccessStyle`).
 - **`AbstractTerm{T}`** — a dimension-/size-less array-like with element type
   `T` — and `ArrayOrTermLike{T} = Union{AbstractArray{T}, AbstractTerm{T}}`, the
   coefficient type of every stencil (a stencil is *assemblable* with a concrete

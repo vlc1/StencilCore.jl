@@ -31,32 +31,62 @@ narrowed to a `LinearStencil` / `StarStencil` via [`as_linear`](@ref) /
 [`as_star`](@ref), which is where the layout switches to array-of-structs (one
 `SVector{M}`-valued coefficient) by `_interlace`ing `terms`.
 """
-struct Stencil{M, C<:NTuple{M, StaticShift}, A<:NTuple{M, ArrayOrTermLike}, T, S<:AccessStyle} <: AbstractStencil{S, T}
+struct Stencil{M, C<:NTuple{M, StaticShift}, A<:NTuple{M, ArrayOrTermLike}, T, S<:AccessStyle} <: NeighborhoodStencil{T, S}
     shifts::C
     terms::A
 
     # Access style via a positional Type tag (S is the trailing type param;
-    # T is the common coefficient eltype, second-to-last).
+    # T is the common coefficient eltype, second-to-last). This *inferring*
+    # form derives T from the first non-wildcard coefficient.
     function Stencil(
         ::Type{S},
         shifts::NTuple{M, StaticShift},
         terms::NTuple{M, ArrayOrTermLike},
     ) where {S<:AccessStyle, M}
         M >= 1 || throw(ArgumentError("Stencil needs at least one offset"))
-        # Wildcards (Fill-wrapped Null/Unity) materialize to `zero(T)`/`one(T)`
-        # of any surrounding T via promotion (the Bool-shape discipline); they
-        # do not fix T. Derive T from the non-wildcard coefficients.
+        # Wildcards (Fill-wrapped Null/Unity, IdentityStencil, and any
+        # Pointwise/Shifted reaching only wildcard leaves) materialize to
+        # `zero(T)`/`one(T)` of any surrounding T via promotion (the
+        # Bool-shape discipline); they do not fix T. Derive T from the
+        # non-wildcard coefficients.
         ix = findfirst(!_is_eltype_wildcard, terms)
         ix === nothing && throw(ArgumentError(
             "Stencil cannot derive a coefficient eltype: every coefficient " *
-            "is a structural Null/Unity wildcard. Include at least one " *
-            "non-wildcard coefficient so T can be pinned."))
+            "is a structural wildcard. Either include at least one " *
+            "non-wildcard coefficient, or use `Stencil{T}(S, shifts, terms)` " *
+            "to pin T explicitly."))
         T = eltype(terms[ix])
         for (k, t) in enumerate(terms)
             _is_eltype_wildcard(t) && continue
             eltype(t) === T || throw(ArgumentError(
                 "Stencil coefficients must share eltype; derived T = $(T) " *
                 "(from terms[$(ix)]) but terms[$(k)] has eltype $(eltype(t))"))
+        end
+        new{M, typeof(shifts), typeof(terms), T, S}(shifts, terms)
+    end
+
+    # Explicit-T form: caller supplies the coefficient eltype as a leading
+    # `Type{T}` argument. Useful when every coefficient is a wildcard
+    # (e.g. `differentiate(f, f)` whose only coefficient is `IdentityStencil`).
+    # Wildcards bypass the uniformity check; non-wildcard coefficients must
+    # agree with the supplied T.
+    #
+    # The Stencil struct's first type parameter is `M` (offset count), so the
+    # `{T}` curly-brace syntax binds `M`, not `T`. We therefore pass T as a
+    # positional `::Type{T}` argument; the `S<:AccessStyle` constraint on the
+    # inferring form keeps the two dispatch paths disjoint.
+    function Stencil(
+        ::Type{T},
+        ::Type{S},
+        shifts::NTuple{M, StaticShift},
+        terms::NTuple{M, ArrayOrTermLike},
+    ) where {T, S<:AccessStyle, M}
+        M >= 1 || throw(ArgumentError("Stencil needs at least one offset"))
+        for (k, t) in enumerate(terms)
+            _is_eltype_wildcard(t) && continue
+            eltype(t) === T || throw(ArgumentError(
+                "Stencil(T, …) coefficients must have eltype T = $(T); " *
+                "terms[$(k)] has eltype $(eltype(t))"))
         end
         new{M, typeof(shifts), typeof(terms), T, S}(shifts, terms)
     end

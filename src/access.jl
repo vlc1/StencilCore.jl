@@ -42,28 +42,44 @@ compressed-sparse-row backend. See [`AccessStyle`](@ref).
 struct RowAccess    <: AccessStyle end
 
 """
-    AbstractStencil{S<:AccessStyle, T}
+    AbstractStencil{T}
 
-Abstract supertype for every stencil. Subtypes (`LinearStencil`,
-`StarStencil`, `Stencil`, …) carry the access style `S` as their **last**
-type parameter and the coefficient element type `T` as the **second-to-last**,
-and declare `<: AbstractStencil{S, T}`.
-
-`T` is the *linear-map space* — the element type of the per-cell coefficient,
+Abstract supertype for every stencil — both the *diagonal* stencils that
+live in pointwise-land ([`AbstractPointwise`](@ref) and its subtypes) and the
+*neighborhood* stencils that carry an [`AccessStyle`](@ref) and a tuple of
+offsets ([`NeighborhoodStencil`](@ref)). The single type parameter `T` is
+the *linear-map space* — the element type of the per-cell coefficient,
 mirroring how `Unity{T}` carries the multiplicative-identity space in
-scalar-land. For a `LinearStencil` / `StarStencil` whose coefficient stores
-`SVector{L, F}` per cell, `T === F` (not `SVector{L, F}`). The match rule for
-applying a stencil to an `AbstractPointwise{U}` (a future `*` overload) is
-`T === _unity_space(U)`: scalar-on-scalar for `U <: Number`,
-`SMatrix{N, N, F}`-on-`SVector{N, F}` for vector-valued fields.
+scalar-land.
 
-Provides the [`AccessStyle`](@ref) trait accessor and a `Base.eltype` accessor
-— subtypes inherit both without redefining.
+For a `LinearStencil` / `StarStencil` whose coefficient stores `SVector{L, F}`
+per cell, `T === F` (not `SVector{L, F}`). The match rule for applying a
+stencil to an `AbstractPointwise{U}` is `T === _unity_space(U)`: scalar-on-
+scalar for `U <: Number`, `SMatrix{N, N, F}`-on-`SVector{N, F}` for
+vector-valued fields.
+
+Provides a `Base.eltype` accessor — subtypes inherit it without redefining.
+The [`AccessStyle`](@ref) trait is defined on [`NeighborhoodStencil`](@ref),
+not on `AbstractStencil` itself, since diagonal stencils have no offsets.
 """
-abstract type AbstractStencil{S<:AccessStyle, T} end
+abstract type AbstractStencil{T} end
 
-AccessStyle(st::AbstractStencil) = AccessStyle(typeof(st))
-AccessStyle(::Type{<:AbstractStencil{S, T}}) where {S, T} = S()
-
-Base.eltype(::Type{<:AbstractStencil{S, T}}) where {S, T} = T
+Base.eltype(::Type{<:AbstractStencil{T}}) where {T} = T
 Base.eltype(st::AbstractStencil) = eltype(typeof(st))
+
+"""
+    NeighborhoodStencil{T, S<:AccessStyle} <: AbstractStencil{T}
+
+Abstract supertype for stencils that carry off-diagonal offsets and therefore
+require an [`AccessStyle`](@ref) anchor. Concrete subtypes — `Stencil`,
+`LinearStencil`, `StarStencil` — declare `<: NeighborhoodStencil{T, S}`,
+carrying the coefficient element type `T` as their second-to-last type
+parameter and the access style `S` as their **last** type parameter.
+
+Provides the [`AccessStyle`](@ref) trait accessor; subtypes inherit it
+without redefining.
+"""
+abstract type NeighborhoodStencil{T, S<:AccessStyle} <: AbstractStencil{T} end
+
+AccessStyle(st::NeighborhoodStencil) = AccessStyle(typeof(st))
+AccessStyle(::Type{<:NeighborhoodStencil{T, S}}) where {T, S} = S()

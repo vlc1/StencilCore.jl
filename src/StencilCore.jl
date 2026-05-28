@@ -14,8 +14,8 @@ include("differentiate.jl")
 include("structured.jl")
 include("general.jl")
 
-# Access-style trait + abstract stencil supertype.
-export AccessStyle, ColumnAccess, RowAccess, AbstractStencil
+# Access-style trait + abstract stencil supertypes.
+export AccessStyle, ColumnAccess, RowAccess, AbstractStencil, NeighborhoodStencil
 
 # Term-like supertype shared by arrays and symbolic terms.
 export AbstractPointwise, ArrayOrTermLike

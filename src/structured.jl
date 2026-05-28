@@ -22,8 +22,8 @@ Type parameters:
   coefficient also `D ≤ ndims(term)`).
 - `O = δ_min`, `L = δ_max − δ_min + 1` — static via `SUnitRange`.
 - `T`: scalar coefficient element type (the per-cell coefficient is
-  `SVector{L, T}`). This is the linear-map space surfaced as the second-to-
-  last parameter of [`AbstractStencil`](@ref).
+  `SVector{L, T}`). This is the linear-map space surfaced as the first
+  parameter of [`AbstractStencil`](@ref) / [`NeighborhoodStencil`](@ref).
 - `A<:ArrayOrTermLike{SVector{L, T}}`: the coefficient container — a concrete
   `AbstractArray{SVector{L, T}}` (assemblable) or a symbolic
   `AbstractPointwise{SVector{L, T}}`. **`N` (grid rank) is not a stencil
@@ -35,7 +35,7 @@ The default outer constructor defaults `S` to `ColumnAccess`. A catch-all
 reports `ArgumentError`s for non-`SUnitRange` offsets and ill-typed
 coefficients.
 """
-struct LinearStencil{D, O, L, T, A<:ArrayOrTermLike{SVector{L, T}}, S<:AccessStyle} <: AbstractStencil{S, T}
+struct LinearStencil{D, O, L, T, A<:ArrayOrTermLike{SVector{L, T}}, S<:AccessStyle} <: NeighborhoodStencil{T, S}
     offsets::SUnitRange{O, L}
     term::A
 
@@ -128,13 +128,13 @@ Type parameters:
 - `N` grid rank, kept explicit; checked to equal `(M-1)/(2L)` (and the
   coefficient array's `ndims`, when concrete).
 - `T` scalar coefficient element type (the per-cell coefficient is
-  `SVector{M, T}`). The linear-map space surfaced as the second-to-last
-  parameter of [`AbstractStencil`](@ref).
+  `SVector{M, T}`). The linear-map space surfaced as the first parameter
+  of [`AbstractStencil`](@ref) / [`NeighborhoodStencil`](@ref).
 - `A<:ArrayOrTermLike{SVector{M, T}}`: the (single) coefficient container —
   concrete array (assemblable) or symbolic term.
 - `S<:AccessStyle`.
 """
-struct StarStencil{L, N, M, T, A<:ArrayOrTermLike{SVector{M, T}}, S<:AccessStyle} <: AbstractStencil{S, T}
+struct StarStencil{L, N, M, T, A<:ArrayOrTermLike{SVector{M, T}}, S<:AccessStyle} <: NeighborhoodStencil{T, S}
     term::A
 
     # Concrete-array coefficient: grid rank N = ndims; cross-check M = 2NL+1.

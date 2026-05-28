@@ -8,21 +8,21 @@
 # `ArrayOrTermLike{T}` without depending on the CAS.
 
 """
-    AbstractPointwise{T}
+    AbstractPointwise{T} <: AbstractStencil{T}
 
-Supertype of every symbolic grid expression. An `AbstractPointwise{T}`
-behaves like a dimension- and size-less array whose `eltype` is `T`:
-its grid rank `N` is unknown until it is materialized against concrete
-arrays, but its element type `T` (the value each cell will hold once
-materialized) is fixed at construction.
+Supertype of every symbolic grid expression — and, by virtue of being a
+subtype of [`AbstractStencil`](@ref), of every *diagonal* stencil. An
+`AbstractPointwise{T}` behaves like a dimension- and size-less array whose
+`eltype` is `T`: its grid rank `N` is unknown until it is materialized
+against concrete arrays, but its element type `T` (the value each cell will
+hold once materialized) is fixed at construction.
 
-`eltype(::AbstractPointwise{T}) === T`. Concrete subtypes are provided by the
-StencilCalculus package.
+A pointwise term acts as a *diagonal stencil* under `*(stencil, pointwise)`:
+applying it to another pointwise term multiplies element-wise. Concrete
+subtypes (`Slot`, `Pointwise`, `Shifted`, `Fill`, `IdentityStencil`,
+`DiagonalStencil`) live in the StencilCalculus package.
 """
-abstract type AbstractPointwise{T} end
-
-Base.eltype(::Type{<:AbstractPointwise{T}}) where {T} = T
-Base.eltype(t::AbstractPointwise) = eltype(typeof(t))
+abstract type AbstractPointwise{T} <: AbstractStencil{T} end
 
 # Shared concrete-eltype guard, used by every leaf type whose `T` it
 # materializes / assembles into. StencilCore: Var, Constant,
